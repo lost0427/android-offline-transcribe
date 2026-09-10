@@ -874,7 +874,7 @@ class WhisperEngine(
                     Log.i("WhisperEngine", "transcribeFile: Android Speech API<33, using acoustic loopback")
                     engine.transcribeViaAcousticLoopback(audioSamples, languageHint)
                 } else {
-                    engine.transcribe(audioSamples, numThreads, languageHint)
+                    transcribeFileSlices(engine, audioSamples, numThreads, languageHint)
                 }
 
                 val elapsed = (System.nanoTime() - startTime) / 1_000_000_000.0
@@ -964,6 +964,34 @@ class WhisperEngine(
 
     fun writeE2EFailure(modelId: String = _selectedModel.value.id, error: String) {
         e2eOrchestrator.writeFailure(modelId = modelId, error = error)
+    }
+
+    /** Transcribe decoded file samples, sliced by Silero VAD when ready. Falls back to one whole-file pass. */
+    private suspend fun transcribeFileSlices(
+        engine: AsrEngine,
+        audioSamples: FloatArray,
+        numThreads: Int,
+        languageHint: String
+    ): List<TranscriptionSegment> {
+        if (sileroVad.state.value == ModelState.Unloaded && sileroVad.isDownloaded()) {
+            sileroVad.prepare(download = false)
+        }
+        if (sileroVad.state.value != ModelState.Loaded) {
+            return engine.transcribe(audioSamples, numThreads, languageHint)
+        }
+        val slices = sileroVad.detect(audioSamples)
+        if (slices.isEmpty()) {
+            return engine.transcribe(audioSamples, numThreads, languageHint)
+        }
+        val merged = mutableListOf<TranscriptionSegment>()
+        for (slice in slices) {
+            val from = (slice.startMs * AudioConstants.SAMPLE_RATE / 1000).toInt().coerceIn(0, audioSamples.size)
+            val to = (slice.endMs * AudioConstants.SAMPLE_RATE / 1000).toInt().coerceIn(from, audioSamples.size)
+            if (to <= from) continue
+            val segments = engine.transcribe(audioSamples.copyOfRange(from, to), numThreads, languageHint)
+            merged += segments.map { it.copy(startMs = it.startMs + slice.startMs, endMs = it.endMs + slice.startMs) }
+        }
+        return merged
     }
 
     fun writeE2ESkipped(modelId: String = _selectedModel.value.id, reason: String) {
@@ -1214,6 +1242,6 @@ class WhisperEngine(
         mlKitTranslator.close()
         currentEngine?.release()
         currentEngine = null
-
+        sileroVad.release()
     }
 }
