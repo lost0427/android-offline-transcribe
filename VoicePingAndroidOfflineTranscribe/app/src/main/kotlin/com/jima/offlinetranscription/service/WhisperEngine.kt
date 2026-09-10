@@ -872,6 +872,7 @@ class WhisperEngine(
                 Log.i("WhisperEngine", "transcribeFile: starting transcription with $numThreads threads")
                 var progressiveText: String? = null
                 val recentRates = ArrayDeque<Pair<Int, Double>>()
+                var asrSeconds = 0.0
                 val segments = if (engine is AndroidSpeechEngine && Build.VERSION.SDK_INT < 33 && e2eLocked) {
                     // On API < 33, SpeechRecognizer can't accept file audio directly.
                     // For E2E benchmarks, attempt acoustic loopback (speaker -> mic).
@@ -884,6 +885,7 @@ class WhisperEngine(
                         engine, pcmFile, totalSamples, numThreads, languageHint, peakGain,
                         onProgress = { msg -> _hypothesisText.value = msg }
                     ) { sliceSegs, sliceElapsedSec ->
+                        asrSeconds += sliceElapsedSec
                         chunkManager.confirmedSegments.addAll(sliceSegs)
                         val rendered = chunkManager.renderSegmentsText(chunkManager.confirmedSegments)
                         chunkManager.confirmedText = rendered
@@ -905,8 +907,10 @@ class WhisperEngine(
                 val elapsed = (System.nanoTime() - startTime) / 1_000_000_000.0
                 val totalWords = segments.sumOf { countTokens(it.text) }
                 Log.i("WhisperEngine", "transcribeFile: ${segments.size} segments, $totalWords words in ${"%.2f".format(elapsed)}s")
-                if (elapsed > 0 && totalWords > 0) {
-                    _tokensPerSecond.value = totalWords / elapsed
+                // Overall tokens/s over real ASR time only (excludes decode + VAD).
+                val asrElapsed = if (asrSeconds > 0) asrSeconds else elapsed
+                if (asrElapsed > 0 && totalWords > 0) {
+                    _tokensPerSecond.value = totalWords / asrElapsed
                 }
                 // Apply detected language to translation direction
                 val lang = normalizeLanguageCode(segments.firstOrNull()?.detectedLanguage)
