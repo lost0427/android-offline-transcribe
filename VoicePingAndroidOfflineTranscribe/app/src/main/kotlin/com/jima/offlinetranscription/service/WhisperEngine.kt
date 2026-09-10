@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.BufferedOutputStream
+import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -859,6 +860,8 @@ class WhisperEngine(
                 val totalSamples = withContext(Dispatchers.IO) {
                     decodeAudioFileTo16kPcm(filePath, pcmFile)
                 }
+                val peakGain = withContext(Dispatchers.IO) { computePcmPeakGain(pcmFile) }
+                if (peakGain > 1f) Log.i("WhisperEngine", "transcribeFile: quiet audio, applying gain x$peakGain")
                 val durationSec = totalSamples / AudioConstants.SAMPLE_RATE.toDouble()
                 Log.i("WhisperEngine", "transcribeFile: $totalSamples samples (${durationSec}s)")
                 _hypothesisText.value = "Transcribing ${"%.1f".format(durationSec)}s of audio..."
@@ -874,17 +877,17 @@ class WhisperEngine(
                     // For E2E benchmarks, attempt acoustic loopback (speaker -> mic).
                     Log.i("WhisperEngine", "transcribeFile: Android Speech API<33, using acoustic loopback")
                     engine.transcribeViaAcousticLoopback(
-                        readPcm16(pcmFile, 0, totalSamples.toInt()), languageHint
+                        readPcm16(pcmFile, 0, totalSamples.toInt(), peakGain), languageHint
                     )
                 } else {
-                    transcribePcmSlices(engine, pcmFile, totalSamples, numThreads, languageHint) { sliceSegs, sliceElapsedSec ->
+                    transcribePcmSlices(engine, pcmFile, totalSamples, numThreads, languageHint, peakGain) { sliceSegs, sliceElapsedSec ->
                         chunkManager.confirmedSegments.addAll(sliceSegs)
                         val rendered = chunkManager.renderSegmentsText(chunkManager.confirmedSegments)
                         chunkManager.confirmedText = rendered
                         _confirmedText.value = rendered
                         progressiveText = rendered
                         // Rolling tokens/s over the last 5 slices; silent slices don't dilute it.
-                        val words = sliceSegs.sumOf { it.text.split(" ").size }
+                        val words = sliceSegs.sumOf { countTokens(it.text) }
                         if (words > 0) {
                             recentRates.addLast(words to sliceElapsedSec)
                             if (recentRates.size > 5) recentRates.removeFirst()
@@ -897,7 +900,7 @@ class WhisperEngine(
                 }
 
                 val elapsed = (System.nanoTime() - startTime) / 1_000_000_000.0
-                val totalWords = segments.sumOf { it.text.split(" ").size }
+                val totalWords = segments.sumOf { countTokens(it.text) }
                 Log.i("WhisperEngine", "transcribeFile: ${segments.size} segments, $totalWords words in ${"%.2f".format(elapsed)}s")
                 if (elapsed > 0 && totalWords > 0) {
                     _tokensPerSecond.value = totalWords / elapsed
@@ -998,24 +1001,31 @@ class WhisperEngine(
         totalSamples: Long,
         numThreads: Int,
         languageHint: String,
+        peakGain: Float,
         onSlice: (List<TranscriptionSegment>, Double) -> Unit
     ): List<TranscriptionSegment> {
         if (sileroVad.state.value == ModelState.Unloaded && sileroVad.isDownloaded()) {
             sileroVad.prepare(download = false)
         }
         val slices = if (sileroVad.state.value == ModelState.Loaded) {
-            detectVadWindows(pcm, totalSamples)
+            detectVadWindows(pcm, totalSamples, peakGain)
         } else {
             emptyList()
         }
         val sr = AudioConstants.SAMPLE_RATE.toLong()
         val merged = mutableListOf<TranscriptionSegment>()
         suspend fun runSlice(samples: FloatArray, offsetMs: Long) {
-            val sliceStart = System.nanoTime()
-            val segs = engine.transcribe(samples, numThreads, languageHint)
-                .map { it.copy(startMs = it.startMs + offsetMs, endMs = it.endMs + offsetMs) }
-            onSlice(segs, (System.nanoTime() - sliceStart) / 1_000_000_000.0)
-            merged += segs
+            try {
+                val sliceStart = System.nanoTime()
+                val segs = engine.transcribe(samples, numThreads, languageHint)
+                    .map { it.copy(startMs = it.startMs + offsetMs, endMs = it.endMs + offsetMs) }
+                onSlice(segs, (System.nanoTime() - sliceStart) / 1_000_000_000.0)
+                merged += segs
+            } catch (e: Throwable) {
+                // One bad slice must not kill the whole transcription.
+                if (e is CancellationException) throw e
+                Log.w("WhisperEngine", "transcribeFile: slice @${offsetMs}ms failed, skipping", e)
+            }
         }
         if (slices.isEmpty()) {
             // ponytail: fixed 30 s windows when VAD is unavailable — seams may clip a word mid-air.
@@ -1023,7 +1033,7 @@ class WhisperEngine(
             var s = 0L
             while (s < totalSamples) {
                 val count = minOf(window, totalSamples - s).toInt()
-                runSlice(readPcm16(pcm, s, count), s * 1000 / sr)
+                runSlice(readPcm16(pcm, s, count, peakGain), s * 1000 / sr)
                 s += count
             }
             return merged
@@ -1032,14 +1042,14 @@ class WhisperEngine(
             val from = (slice.startMs * sr / 1000).coerceIn(0L, totalSamples - 1)
             val to = (slice.endMs * sr / 1000).coerceIn(from, totalSamples)
             if (to <= from) continue
-            runSlice(readPcm16(pcm, from, (to - from).toInt()), from * 1000 / sr)
+            runSlice(readPcm16(pcm, from, (to - from).toInt(), peakGain), from * 1000 / sr)
         }
         return merged
     }
 
     /** Run VAD over the PCM file in 60 s windows; speech still open at a seam reappears
      *  complete in the next window, so truncated-at-seam segments are dropped here. */
-    private fun detectVadWindows(pcm: File, totalSamples: Long): List<VadSegment> {
+    private fun detectVadWindows(pcm: File, totalSamples: Long, gain: Float): List<VadSegment> {
         val sr = AudioConstants.SAMPLE_RATE.toLong()
         val windowSamples = 60L * sr
         val results = mutableListOf<VadSegment>()
@@ -1048,7 +1058,7 @@ class WhisperEngine(
             val count = minOf(windowSamples, totalSamples - start).toInt()
             val windowMs = count * 1000 / sr
             val isLast = start + count >= totalSamples
-            for (seg in sileroVad.detect(readPcm16(pcm, start, count))) {
+            for (seg in sileroVad.detect(readPcm16(pcm, start, count, gain))) {
                 if (!isLast && seg.endMs >= windowMs - 250) continue
                 results += VadSegment(
                     startMs = seg.startMs + start * 1000 / sr,
@@ -1318,8 +1328,25 @@ class WhisperEngine(
         }
     }
 
+    /** Tokens = latin words + CJK characters; split(" ") alone reads a CJK sentence as one giant "word". */
+    private fun countTokens(text: String): Int {
+        var tokens = 0
+        for (raw in text.split(" ")) {
+            val chunk = raw.trim()
+            if (chunk.isEmpty()) continue
+            var cjk = 0
+            for (c in chunk) {
+                if (c.code in 0x3040..0x30FF || c.code in 0x3400..0x4DBF ||
+                    c.code in 0x4E00..0x9FFF || c.code in 0xAC00..0xD7AF
+                ) cjk++
+            }
+            tokens += if (cjk > 0) cjk else 1
+        }
+        return tokens
+    }
+
     /** Read [count] mono 16k samples starting at [startSample] from a raw PCM16 file. */
-    private fun readPcm16(pcm: File, startSample: Long, count: Int): FloatArray {
+    private fun readPcm16(pcm: File, startSample: Long, count: Int, gain: Float = 1f): FloatArray {
         RandomAccessFile(pcm, "r").use { raf ->
             raf.seek(startSample * 2L)
             val bytes = ByteArray(count * 2)
@@ -1327,9 +1354,33 @@ class WhisperEngine(
             return FloatArray(count) { i ->
                 val lo = bytes[2 * i].toInt() and 0xff
                 val hi = bytes[2 * i + 1].toInt()
-                ((hi shl 8) or lo) / 32768f
+                (((hi shl 8) or lo) / 32768f) * gain
             }
         }
+    }
+
+    /** Gain multiplier for quiet recordings: normalize peak to ~0.9. ponytail: capped 16x —
+     * beyond that the amplified noise floor hurts ASR more than the gain helps. */
+    private fun computePcmPeakGain(pcm: File): Float {
+        val buf = ByteArray(64 * 1024)
+        var peak = 0
+        DataInputStream(pcm.inputStream().buffered()).use { din ->
+            while (true) {
+                val n = din.read(buf)
+                if (n <= 0) break
+                var i = 0
+                while (i + 1 < n) {
+                    val v = ((buf[i].toInt() and 0xff) or (buf[i + 1].toInt() shl 8)).toShort().toInt()
+                    val a = if (v < 0) -v else v
+                    if (a > peak) peak = a
+                    i += 2
+                }
+            }
+        }
+        if (peak == 0) return 1f
+        val p = peak / 32768f
+        if (p >= 0.3f) return 1f
+        return (0.9f / p).coerceAtMost(16f)
     }
 
     private fun persistTranscriptIfMeaningful(
