@@ -118,26 +118,14 @@ class E2ETestOrchestrator(
     }
 
     fun writeFailure(modelId: String = engine.selectedModel.value.id, error: String) {
-        val model = ModelInfo.findById(modelId) ?: engine.selectedModel.value
-        val json = JSONObject().apply {
-            put("model_id", modelId)
-            put("engine", model.inferenceMethod)
-            put("transcript", "")
-            put("tokens_per_second", 0.0)
-            put("translated_text", "")
-            put("translation_warning", JSONObject.NULL)
-            put("expects_translation", false)
-            put("translation_ready", true)
-            put("pass", false)
-            put("skipped", false)
-            put("duration_ms", 0.0)
-            put("timestamp", java.time.Instant.now().toString())
-            put("error", error)
-        }.toString(2)
-        writeJson(modelId = modelId, json = json)
+        writeEmptyResult(modelId = modelId, skipped = false, error = error)
     }
 
     fun writeSkipped(modelId: String = engine.selectedModel.value.id, reason: String) {
+        writeEmptyResult(modelId = modelId, skipped = true, error = reason)
+    }
+
+    private fun writeEmptyResult(modelId: String, skipped: Boolean, error: String) {
         val model = ModelInfo.findById(modelId) ?: engine.selectedModel.value
         val json = JSONObject().apply {
             put("model_id", modelId)
@@ -149,10 +137,10 @@ class E2ETestOrchestrator(
             put("expects_translation", false)
             put("translation_ready", true)
             put("pass", false)
-            put("skipped", true)
+            put("skipped", skipped)
             put("duration_ms", 0.0)
             put("timestamp", java.time.Instant.now().toString())
-            put("error", reason)
+            put("error", error)
         }.toString(2)
         writeJson(modelId = modelId, json = json)
     }
