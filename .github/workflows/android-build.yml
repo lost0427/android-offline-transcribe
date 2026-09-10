@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - 'v*'
   pull_request:
   workflow_dispatch:
 
@@ -90,12 +92,12 @@ jobs:
           if-no-files-found: error
 
       - name: Publish GitHub release assets
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.sha }}
-          name: Build ${{ github.sha }}
-          prerelease: true
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('build-{0}', github.sha) }}
+          name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('Build {0}', github.sha) }}
+          prerelease: ${{ !startsWith(github.ref, 'refs/tags/v') }}
           generate_release_notes: true
           files: |
             VoicePingAndroidOfflineTranscribe/app/build/outputs/apk/debug/*.apk
