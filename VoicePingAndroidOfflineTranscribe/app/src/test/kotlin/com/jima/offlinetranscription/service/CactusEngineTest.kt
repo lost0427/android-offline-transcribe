@@ -1,6 +1,5 @@
 package com.voiceping.offlinetranscription.service
 
-import com.voiceping.offlinetranscription.model.CactusModelType
 import org.junit.Test
 import kotlin.test.assertFalse
 
@@ -8,20 +7,20 @@ class CactusEngineTest {
 
     @Test
     fun newEngine_isNotLoaded() {
-        val engine = CactusEngine(CactusModelType.WHISPER)
+        val engine = CactusEngine()
         assertFalse(engine.isLoaded)
     }
 
     @Test
     fun release_setsLoadedFalse() {
-        val engine = CactusEngine(CactusModelType.WHISPER)
+        val engine = CactusEngine()
         engine.release()
         assertFalse(engine.isLoaded)
     }
 
     @Test
     fun isStreaming_defaultsFalse() {
-        val engine = CactusEngine(CactusModelType.WHISPER)
+        val engine = CactusEngine()
         assertFalse(engine.isStreaming)
     }
 

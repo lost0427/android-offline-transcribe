@@ -306,10 +306,7 @@ class WhisperEngine(
                 if (!CactusEngine.isRuntimeSupported()) {
                     throw IllegalStateException("Cactus engine requires an arm64-v8a device.")
                 }
-                CactusEngine(
-                    cactusModelType = model.cactusModelType
-                        ?: throw IllegalArgumentException("cactusModelType required for CACTUS models")
-                )
+                CactusEngine()
             }
             EngineType.QWEN_ASR -> QwenASREngine()
             EngineType.QWEN_ONNX -> QwenOnnxEngine()

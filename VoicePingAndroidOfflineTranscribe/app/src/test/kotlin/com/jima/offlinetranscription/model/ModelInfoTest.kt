@@ -288,11 +288,6 @@ class ModelInfoTest {
         assertEquals(6, SherpaModelType.entries.size)
     }
 
-    @Test
-    fun cactusModelType_hasOneValue() {
-        assertEquals(1, CactusModelType.entries.size)
-    }
-
     // -- Cactus engine --
 
     @Test
@@ -301,7 +296,6 @@ class ModelInfoTest {
             .filter { it.id.startsWith("cactus-") }
             .forEach { model ->
                 assertEquals(EngineType.CACTUS, model.engineType, "Expected CACTUS for ${model.id}")
-                assertNotNull(model.cactusModelType, "cactusModelType should not be null for ${model.id}")
             }
     }
 
