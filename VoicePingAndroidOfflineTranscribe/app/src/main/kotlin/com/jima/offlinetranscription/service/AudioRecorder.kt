@@ -58,7 +58,6 @@ class AudioRecorder(private val context: Context) {
     }
 
     private var audioRecord: AudioRecord? = null
-    private var activeConfig: RecorderConfig? = null
     private var preferredConfig: RecorderConfig? = null
     private var mediaProjection: MediaProjection? = null
     // Use ArrayList with initial capacity to reduce reallocation overhead
@@ -198,12 +197,10 @@ class AudioRecorder(private val context: Context) {
         }
 
         audioRecord = record
-        activeConfig = config
         record.startRecording()
         if (record.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
             record.release()
             audioRecord = null
-            activeConfig = null
             throw IllegalStateException("AudioRecord failed to enter RECORDSTATE_RECORDING")
         }
 
@@ -230,7 +227,6 @@ class AudioRecorder(private val context: Context) {
         }
         audioRecord?.release()
         audioRecord = null
-        activeConfig = null
     }
 
     /** Inject pre-recorded samples into the buffer (for testing without mic). */
