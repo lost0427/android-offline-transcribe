@@ -1059,8 +1059,8 @@ class WhisperEngine(
         return merged
     }
 
-    /** Run VAD over the PCM file in 60 s windows; speech still open at a seam reappears
-     *  complete in the next window, so truncated-at-seam segments are dropped here. */
+    /** Run VAD over the PCM file in 60 s windows. Windows do not overlap, so every
+     *  detected segment is kept; a segment touching the window edge is clamped to it. */
     private fun detectVadWindows(
         pcm: File,
         totalSamples: Long,
@@ -1075,12 +1075,13 @@ class WhisperEngine(
         while (start < totalSamples) {
             val count = minOf(windowSamples, totalSamples - start).toInt()
             val windowMs = count * 1000 / sr
-            val isLast = start + count >= totalSamples
             for (seg in sileroVad.detect(readPcm16(pcm, start, count, gain))) {
-                if (!isLast && seg.endMs >= windowMs - 250) continue
+                // ponytail: clamp rather than drop — non-overlapping windows mean the
+                // next window only sees the tail, so dropping the seam segment lost ~half
+                // of continuous speech (max_speech_duration_s forces a 30 s split).
                 results += VadSegment(
                     startMs = seg.startMs + start * 1000 / sr,
-                    endMs = seg.endMs + start * 1000 / sr
+                    endMs = minOf(seg.endMs, windowMs) + start * 1000 / sr
                 )
             }
             start += count
