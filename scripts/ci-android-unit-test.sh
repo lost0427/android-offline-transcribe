@@ -15,6 +15,4 @@ cd "$APP_DIR"
 chmod +x ./gradlew ./setup-deps.sh
 
 ./setup-deps.sh
-./gradlew --no-daemon assembleDebug
-./gradlew --no-daemon assembleDebugAndroidTest
-./gradlew --no-daemon testDebugUnitTest --tests "$TEST_FILTER"
+./gradlew --no-daemon assembleDebug testDebugUnitTest --tests "$TEST_FILTER"

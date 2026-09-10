@@ -9,6 +9,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
@@ -27,10 +31,19 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-          cache: gradle
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
+
+      - name: Cache native build and bundled deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            VoicePingAndroidOfflineTranscribe/app/.cxx
+            VoicePingAndroidOfflineTranscribe/app/libs
+          key: android-native-${{ runner.os }}-${{ hashFiles('VoicePingAndroidOfflineTranscribe/app/src/main/cpp/CMakeLists.txt', 'VoicePingAndroidOfflineTranscribe/whisper.cpp/src/**', 'VoicePingAndroidOfflineTranscribe/whisper.cpp/ggml/src/**', 'VoicePingAndroidOfflineTranscribe/qwen-asr/**') }}
+          restore-keys: |
+            android-native-${{ runner.os }}-
 
       - name: Run minimal unit test script
         run: |
@@ -41,7 +54,7 @@ jobs:
         working-directory: VoicePingAndroidOfflineTranscribe
         run: |
           chmod +x ./gradlew
-          ./gradlew --no-daemon assembleRelease bundleRelease
+          ./gradlew --no-daemon assembleRelease
 
       - name: Validate Android binaries
         run: |
@@ -51,7 +64,6 @@ jobs:
           files=(
             VoicePingAndroidOfflineTranscribe/app/build/outputs/apk/debug/*.apk
             VoicePingAndroidOfflineTranscribe/app/build/outputs/apk/release/*.apk
-            VoicePingAndroidOfflineTranscribe/app/build/outputs/bundle/release/*.aab
           )
 
           mkdir -p build
@@ -77,13 +89,6 @@ jobs:
           path: VoicePingAndroidOfflineTranscribe/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
-      - name: Upload release AAB artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-release-aab
-          path: VoicePingAndroidOfflineTranscribe/app/build/outputs/bundle/release/*.aab
-          if-no-files-found: error
-
       - name: Upload Android checksum artifact
         uses: actions/upload-artifact@v4
         with:
@@ -102,7 +107,6 @@ jobs:
           files: |
             VoicePingAndroidOfflineTranscribe/app/build/outputs/apk/debug/*.apk
             VoicePingAndroidOfflineTranscribe/app/build/outputs/apk/release/*.apk
-            VoicePingAndroidOfflineTranscribe/app/build/outputs/bundle/release/*.aab
             build/android-binaries.sha256
           fail_on_unmatched_files: true
           overwrite_files: true
