@@ -90,7 +90,7 @@ class TranscriptionCoordinator(
         }
         return StreamingChunkManager(
             chunkSeconds = chunkSeconds,
-            sampleRate = AudioRecorder.SAMPLE_RATE,
+            sampleRate = AudioConstants.SAMPLE_RATE,
             minNewAudioSeconds = minNewAudioSeconds
         )
     }
@@ -118,7 +118,7 @@ class TranscriptionCoordinator(
         recordingStartElapsedMs = SystemClock.elapsedRealtime()
         hasCompletedFirstInference = false
         realtimeInferenceCount = 0
-        val chunkSeconds = engine.chunkManager.chunkSamples.toFloat() / AudioRecorder.SAMPLE_RATE
+        val chunkSeconds = engine.chunkManager.chunkSamples.toFloat() / AudioConstants.SAMPLE_RATE
         val baseGate = when {
             isOmnilingualModel() -> OMNILINGUAL_MIN_NEW_AUDIO_SECONDS
             isCactusModel() -> CACTUS_MIN_NEW_AUDIO_SECONDS
@@ -212,8 +212,8 @@ class TranscriptionCoordinator(
                             lastBufferSize = currentCount
                             streamFeedCount += 1
                             if (streamFeedCount <= 3 || streamFeedCount % DIAGNOSTIC_LOG_INTERVAL == 0L) {
-                                val fedSec = newSamples.size.toFloat() / AudioRecorder.SAMPLE_RATE
-                                val totalSec = currentCount.toFloat() / AudioRecorder.SAMPLE_RATE
+                                val fedSec = newSamples.size.toFloat() / AudioConstants.SAMPLE_RATE
+                                val totalSec = currentCount.toFloat() / AudioConstants.SAMPLE_RATE
                                 Log.i(
                                     "TranscriptionCoordinator",
                                     "stream feed #$streamFeedCount +${"%.2f".format(fedSec)}s total=${"%.2f".format(totalSec)}s"
@@ -230,7 +230,7 @@ class TranscriptionCoordinator(
                         engine.scheduleTranslationUpdate()
                         if (normalized.isNotBlank() && normalized != lastLoggedStreamingText) {
                             lastLoggedStreamingText = normalized
-                            val totalSec = currentCount.toFloat() / AudioRecorder.SAMPLE_RATE
+                            val totalSec = currentCount.toFloat() / AudioConstants.SAMPLE_RATE
                             Log.i(
                                 "TranscriptionCoordinator",
                                 "stream hypothesis @${"%.2f".format(totalSec)}s chars=${normalized.length}"
@@ -240,7 +240,7 @@ class TranscriptionCoordinator(
 
                     // Endpoint detected → finalize this utterance
                     if (asrEngine.isEndpointDetected()) {
-                        val totalSec = currentCount.toFloat() / AudioRecorder.SAMPLE_RATE
+                        val totalSec = currentCount.toFloat() / AudioConstants.SAMPLE_RATE
                         Log.i("TranscriptionCoordinator", "stream endpoint detected @${"%.2f".format(totalSec)}s")
                         val finalResult = asrEngine.getStreamingResult()
                         if (finalResult != null && finalResult.text.isNotBlank()) {
@@ -254,7 +254,7 @@ class TranscriptionCoordinator(
                         asrEngine.resetStreamingState()
                     }
 
-                    val streamingSafeTrimSample = (lastBufferSize - AudioRecorder.SAMPLE_RATE * 30)
+                    val streamingSafeTrimSample = (lastBufferSize - AudioConstants.SAMPLE_RATE * 30)
                         .coerceAtLeast(0)
                     trimRecorderBufferIfNeeded(streamingSafeTrimSample)
 
@@ -316,8 +316,8 @@ class TranscriptionCoordinator(
 
         val currentBufferSize = engine.audioRecorder.sampleCount
         val nextBufferSize = currentBufferSize - lastBufferSize
-        val nextBufferSeconds = nextBufferSize.toFloat() / AudioRecorder.SAMPLE_RATE
-        val bufferSeconds = currentBufferSize.toFloat() / AudioRecorder.SAMPLE_RATE
+        val nextBufferSeconds = nextBufferSize.toFloat() / AudioConstants.SAMPLE_RATE
+        val bufferSeconds = currentBufferSize.toFloat() / AudioConstants.SAMPLE_RATE
 
         val initialPhase = !hasCompletedFirstInference
         val baseDelay = if (initialPhase) {
@@ -337,7 +337,7 @@ class TranscriptionCoordinator(
 
         // VAD check — bypass for system playback (continuous audio, not voice-triggered)
         if (engine.useVAD.value && engine.audioInputMode.value != AudioInputMode.SYSTEM_PLAYBACK) {
-            val vadBypassSamples = (AudioRecorder.SAMPLE_RATE * INITIAL_VAD_BYPASS_SECONDS).toInt()
+            val vadBypassSamples = (AudioConstants.SAMPLE_RATE * INITIAL_VAD_BYPASS_SECONDS).toInt()
             val bypassVadDuringStartup = initialPhase && currentBufferSize <= vadBypassSamples
             if (!bypassVadDuringStartup) {
                 val energy = engine.audioRecorder.relativeEnergy
@@ -388,8 +388,8 @@ class TranscriptionCoordinator(
 
         val audioSamples = engine.audioRecorder.samplesRange(slice.startSample, slice.endSample)
         if (audioSamples.isEmpty()) return
-        val sliceStartSec = slice.startSample.toFloat() / AudioRecorder.SAMPLE_RATE
-        val sliceEndSec = slice.endSample.toFloat() / AudioRecorder.SAMPLE_RATE
+        val sliceStartSec = slice.startSample.toFloat() / AudioConstants.SAMPLE_RATE
+        val sliceEndSec = slice.endSample.toFloat() / AudioConstants.SAMPLE_RATE
         if (isFastOfflineModel()) {
             val sliceRms = computeRms(audioSamples)
             if (sliceRms < SHERPA_MIN_INFERENCE_RMS) {
@@ -437,7 +437,7 @@ class TranscriptionCoordinator(
                 movingAverageInferenceSeconds + INFERENCE_EMA_ALPHA * (elapsed - movingAverageInferenceSeconds)
             }
         }
-        val sliceDurationSec = audioSamples.size.toFloat() / AudioRecorder.SAMPLE_RATE
+        val sliceDurationSec = audioSamples.size.toFloat() / AudioConstants.SAMPLE_RATE
         val totalWords = newSegments.sumOf { it.text.split(" ").size }
         if (elapsed > 0 && totalWords > 0) {
             engine.updateTokensPerSecond(totalWords / elapsed)
@@ -477,7 +477,7 @@ class TranscriptionCoordinator(
             )
         }
 
-        val safeTrimSample = ((engine.chunkManager.lastConfirmedSegmentEndMs * AudioRecorder.SAMPLE_RATE) / 1000)
+        val safeTrimSample = ((engine.chunkManager.lastConfirmedSegmentEndMs * AudioConstants.SAMPLE_RATE) / 1000)
             .toInt()
         trimRecorderBufferIfNeeded(safeTrimSample)
     }
@@ -558,7 +558,7 @@ class TranscriptionCoordinator(
     }
 
     private fun keepVadPreroll(currentBufferSize: Int) {
-        val preRollSamples = (AudioRecorder.SAMPLE_RATE * VAD_PREROLL_SECONDS).toInt()
+        val preRollSamples = (AudioConstants.SAMPLE_RATE * VAD_PREROLL_SECONDS).toInt()
         lastBufferSize = (currentBufferSize - preRollSamples).coerceAtLeast(0)
     }
 
