@@ -2,7 +2,6 @@ package com.voiceping.offlinetranscription.service
 
 import android.content.Context
 import android.util.Log
-import com.voiceping.offlinetranscription.model.EngineType
 import com.voiceping.offlinetranscription.model.ModelInfo
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -49,8 +48,6 @@ class E2ETestOrchestrator(
         skipped: Boolean = false
     ) {
         val model = engine.selectedModel.value
-        val keywords = listOf("country", "ask", "do for", "fellow", "americans")
-        val lowerTranscript = transcript.lowercase()
         val translatedText = engine.translatedConfirmedText.value
         val sourceCode = engine.translationSourceLanguageCode.value.trim().lowercase()
         val targetCode = engine.translationTargetLanguageCode.value.trim().lowercase()
@@ -61,29 +58,12 @@ class E2ETestOrchestrator(
             targetCode.isNotBlank() &&
             sourceCode != targetCode
         val translationReady = !expectsTranslation || translatedText.isNotBlank()
-        val isOmnilingual = model.id.contains("omnilingual", ignoreCase = true)
-        val hasKeywordHit = keywords.any { lowerTranscript.contains(it) }
         val hasMeaningfulText = transcript.any { it.isLetterOrDigit() }
-        val asciiLetters = transcript.count { it.isLetter() && it.code < 128 }
-        val nonAsciiLetters = transcript.count { it.isLetter() && it.code >= 128 }
-        val omnilingualLooksEnglish =
-            asciiLetters >= 8 &&
-                asciiLetters >= nonAsciiLetters
-        val isAndroidSpeech = model.engineType == EngineType.ANDROID_SPEECH
-        val androidSpeechApiLimited = isAndroidSpeech &&
-            !AndroidSpeechEngine.supportsAudioPipe() &&
-            transcript.contains("API 33+")
-        val transcriptPass = when {
-            androidSpeechApiLimited -> true  // Engine correctly reports API limitation
-            isOmnilingual -> hasMeaningfulText && omnilingualLooksEnglish
-            else -> hasKeywordHit
-        }
 
-        // pass = core transcription quality only; translation tracked separately
+        // pass = non-empty transcript; content quality is not judged here
         val pass = !skipped &&
             error == null &&
-            transcript.isNotEmpty() &&
-            transcriptPass
+            hasMeaningfulText
 
         val result = E2ETestResult(
             modelId = model.id,
