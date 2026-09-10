@@ -134,6 +134,7 @@ instrument_timeout_for_model() {
         omnilingual-300m) echo 2400 ;;
         parakeet-tdt-v3) echo 1800 ;;
         whisper-base|whisper-base-en) echo 1200 ;;
+        sensevoice-small) echo 2400 ;;
         *) echo "$INSTRUMENT_TIMEOUT_SEC" ;;
     esac
 }
