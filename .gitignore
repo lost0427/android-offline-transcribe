@@ -47,6 +47,9 @@ VoicePingAndroidOfflineTranscribe/app/schemas/
 # === Claude Code ===
 .claude/
 
+# === Codegraph index (local-only) ===
+.codegraph/
+
 # === Python cache ===
 __pycache__/
 *.pyc
