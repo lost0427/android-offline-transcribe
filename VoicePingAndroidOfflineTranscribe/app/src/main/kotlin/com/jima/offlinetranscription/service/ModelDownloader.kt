@@ -35,12 +35,6 @@ class ModelDownloader(private val modelsDir: File) {
     /** Directory for a specific model's files. */
     fun modelDir(model: ModelInfo): File = File(modelsDir, model.id)
 
-    /** For whisper.cpp models: path to the single model file. */
-    fun modelFilePath(model: ModelInfo): String {
-        val dir = modelDir(model)
-        return File(dir, model.files.first().localName).absolutePath
-    }
-
     /** Check that all files for a model are downloaded. */
     fun isModelDownloaded(model: ModelInfo): Boolean {
         val dir = modelDir(model)

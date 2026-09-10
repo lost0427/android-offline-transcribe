@@ -163,10 +163,8 @@ class WhisperEngine(
     private var recordingJob: Job? = null
     private var energyJob: Job? = null
     private val recorderPrewarmMutex = Mutex()
-    private val inferencePrewarmMutex = Mutex()
     val transcriptionCoordinator = TranscriptionCoordinator(this)
     internal var chunkManager = transcriptionCoordinator.createChunkManagerForModel(_selectedModel.value)
-    private var prewarmedModelId: String? = null
     private val sessionToken = AtomicLong(0)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val mlKitTranslator = MlKitTranslator()
@@ -235,7 +233,7 @@ class WhisperEngine(
             preferences.selectedModelId.collect { savedId ->
                 if (e2eLocked) return@collect
                 if (savedId != null) {
-                    ModelInfo.findByIdOrLegacy(savedId)?.let {
+                    ModelInfo.findById(savedId)?.let {
                         _selectedModel.value = it
                     }
                 }
@@ -306,10 +304,7 @@ class WhisperEngine(
                 if (!CactusEngine.isRuntimeSupported()) {
                     throw IllegalStateException("Cactus engine requires an arm64-v8a device.")
                 }
-                CactusEngine(
-                    cactusModelType = model.cactusModelType
-                        ?: throw IllegalArgumentException("cactusModelType required for CACTUS models")
-                )
+                CactusEngine()
             }
             EngineType.QWEN_ASR -> QwenASREngine()
             EngineType.QWEN_ONNX -> QwenOnnxEngine()
@@ -335,7 +330,7 @@ class WhisperEngine(
     /** Ensure startup model selection reflects persisted user preference before loading. */
     suspend fun syncSelectedModelFromPreferences() {
         val savedId = preferences.selectedModelId.first() ?: return
-        val savedModel = ModelInfo.findByIdOrLegacy(savedId) ?: return
+        val savedModel = ModelInfo.findById(savedId) ?: return
         _selectedModel.value = savedModel
     }
 
@@ -354,7 +349,7 @@ class WhisperEngine(
             downloader.markManagedModelReady(model)
             currentEngine = engine
             _executionProviderStatus.value = engine.executionProviderStatus
-            prewarmedModelId = null
+    
             _modelState.value = ModelState.Loaded
         } catch (e: Throwable) {
             _modelState.value = ModelState.Unloaded
@@ -366,7 +361,7 @@ class WhisperEngine(
         currentEngine?.release()
         currentEngine = null
         _executionProviderStatus.value = ExecutionProviderStatus()
-        prewarmedModelId = null
+
         _modelState.value = ModelState.Unloaded
     }
 
@@ -406,7 +401,7 @@ class WhisperEngine(
                     _modelState.value = ModelState.Unloaded
                     _lastError.value = AppError.InsufficientStorage(
                         needed = model.sizeOnDisk,
-                        available = formatBytes(available)
+                        available = android.text.format.Formatter.formatFileSize(context, available)
                     )
                     return@withLock
                 }
@@ -429,10 +424,9 @@ class WhisperEngine(
 
             val previousEngine = currentEngine
             currentEngine = engine
-            prewarmedModelId = null
+    
             _modelState.value = ModelState.Loaded
             preferences.setSelectedModelId(model.id)
-            preferences.setLastModelPath(modelPath)
             if (previousEngine != null && previousEngine !== engine) {
                 withContext(Dispatchers.Default) {
                     previousEngine.release()
@@ -465,7 +459,7 @@ class WhisperEngine(
             }
         }
         currentEngine = null
-        prewarmedModelId = null
+
         _modelState.value = ModelState.Unloaded
         setupModel()
     }
@@ -531,42 +525,6 @@ class WhisperEngine(
                 audioRecorder.prewarm(_audioInputMode.value)
             }
         }
-    }
-
-    /**
-     * Prime the first native ASR decode so user speech is not delayed by runtime
-     * graph compilation / allocator initialization on the first utterance.
-     */
-    suspend fun prewarmInferencePath() {
-        if (_sessionState.value != SessionState.Idle) return
-        val engine = currentEngine ?: return
-        if (!engine.isLoaded) return
-        val selectedModel = _selectedModel.value
-        val currentModelId = selectedModel.id
-        if (prewarmedModelId == currentModelId) return
-
-        inferencePrewarmMutex.withLock {
-            if (_sessionState.value != SessionState.Idle) return
-            val liveEngine = currentEngine ?: return
-            if (!liveEngine.isLoaded) return
-            val liveModel = _selectedModel.value
-            val liveModelId = liveModel.id
-            if (prewarmedModelId == liveModelId) return
-
-            // Skip synthetic inference prewarm — sherpa-onnx warmup can burn CPU on
-            // some Android runtimes while idle. Mic prewarm is still active.
-            prewarmedModelId = liveModelId
-            Log.i("WhisperEngine", "Skipping inference prewarm for ${liveModel.engineType}")
-        }
-    }
-
-    suspend fun prewarmRealtimePath() {
-        Log.i(
-            "WhisperEngine",
-            "prewarmRealtimePath: state=${_sessionState.value}, inputMode=${_audioInputMode.value}, micPermission=${audioRecorder.hasPermission()}, modelLoaded=${currentEngine?.isLoaded == true}"
-        )
-        prewarmRecordingPath()
-        prewarmInferencePath()
     }
 
     fun startRecording() {
@@ -1017,7 +975,7 @@ class WhisperEngine(
     }
 
     private fun mapDownloadError(error: Throwable): AppError {
-        val root = rootCause(error)
+        val root = generateSequence(error) { it.cause }.last()
         return when {
             !hasValidatedInternetConnection() -> AppError.NetworkUnavailable()
             root is UnknownHostException -> AppError.NetworkUnavailable()
@@ -1026,16 +984,6 @@ class WhisperEngine(
             )
             else -> AppError.ModelDownloadFailed(error)
         }
-    }
-
-    private fun rootCause(error: Throwable): Throwable {
-        var cause = error
-        var next = cause.cause
-        while (next != null && next !== cause) {
-            cause = next
-            next = cause.cause
-        }
-        return cause
     }
 
     private fun parseModelSize(sizeStr: String): Long {
@@ -1050,15 +998,6 @@ class WhisperEngine(
             else -> 0L
         }
     }
-
-    private fun formatBytes(bytes: Long): String {
-        return when {
-            bytes >= 1024L * 1024 * 1024 -> String.format("%.1f GB", bytes / (1024.0 * 1024 * 1024))
-            bytes >= 1024L * 1024 -> String.format("%.0f MB", bytes / (1024.0 * 1024))
-            else -> String.format("%.0f KB", bytes / 1024.0)
-        }
-    }
-
 
     internal fun scheduleTranslationUpdate() {
         translationJob?.cancel()
@@ -1135,75 +1074,8 @@ class WhisperEngine(
         }
     }
 
-    private fun readWavFile(filePath: String): FloatArray {
-        val file = File(filePath)
-        if (!file.exists()) throw Exception("File not found: $filePath")
-        val bytes = file.readBytes()
-        if (bytes.size < 12) throw Exception("File too small to be a valid WAV")
-
-        val riff = String(bytes, 0, 4, Charsets.US_ASCII)
-        if (riff != "RIFF") throw Exception("Not a RIFF file")
-        val wave = String(bytes, 8, 4, Charsets.US_ASCII)
-        if (wave != "WAVE") throw Exception("Not a WAVE file")
-
-        // Parse chunks to find fmt and data
-        var bitsPerSample = 16
-        var channels = 1
-        var sampleRate = AudioConstants.SAMPLE_RATE
-        var dataOffset = -1
-        var dataSize = -1
-
-        var pos = 12
-        while (pos + 8 <= bytes.size) {
-            val chunkId = String(bytes, pos, 4, Charsets.US_ASCII)
-            val chunkSize = java.nio.ByteBuffer.wrap(bytes, pos + 4, 4)
-                .order(java.nio.ByteOrder.LITTLE_ENDIAN).int
-            if (chunkId == "fmt " && pos + 8 + chunkSize <= bytes.size) {
-                val buf = java.nio.ByteBuffer.wrap(bytes, pos + 8, chunkSize)
-                    .order(java.nio.ByteOrder.LITTLE_ENDIAN)
-                buf.short // audioFormat
-                channels = buf.short.toInt()
-                sampleRate = buf.int
-                buf.int // byteRate
-                buf.short // blockAlign
-                bitsPerSample = buf.short.toInt()
-            } else if (chunkId == "data") {
-                dataOffset = pos + 8
-                dataSize = chunkSize.coerceAtMost(bytes.size - dataOffset)
-                break
-            }
-            pos += 8 + chunkSize
-            if (chunkSize % 2 != 0) pos++ // RIFF chunks are word-aligned
-        }
-
-        if (dataOffset < 0 || dataSize <= 0) throw Exception("No data chunk found in WAV")
-        Log.i("WhisperEngine", "WAV: ${sampleRate}Hz ${channels}ch ${bitsPerSample}bit data=${dataSize}B")
-
-        val mono = if (bitsPerSample == 16) {
-            val sampleCount = dataSize / (2 * channels)
-            FloatArray(sampleCount) { i ->
-                val off = dataOffset + i * 2 * channels
-                val low = bytes[off].toInt() and 0xFF
-                val high = bytes[off + 1].toInt()
-                (high shl 8 or low).toFloat() / 32768f
-            }
-        } else if (bitsPerSample == 32) {
-            val sampleCount = dataSize / (4 * channels)
-            FloatArray(sampleCount) { i ->
-                val off = dataOffset + i * 4 * channels
-                java.nio.ByteBuffer.wrap(bytes, off, 4)
-                    .order(java.nio.ByteOrder.LITTLE_ENDIAN).float
-            }
-        } else {
-            throw Exception("Unsupported bits per sample: $bitsPerSample")
-        }
-        return resampleTo16k(mono, sampleRate)
-    }
-
-    /** Uses Android's platform decoders for local MP3/AAC/M4A/OGG and supported video containers. */
+    /** Uses Android's platform decoders for WAV, MP3/AAC/M4A/OGG and supported video containers. */
     private fun decodeAudioFile(filePath: String): FloatArray {
-        if (filePath.lowercase().endsWith(".wav")) return readWavFile(filePath)
-
         val extractor = MediaExtractor()
         var codec: MediaCodec? = null
         try {
@@ -1337,6 +1209,6 @@ class WhisperEngine(
         mlKitTranslator.close()
         currentEngine?.release()
         currentEngine = null
-        prewarmedModelId = null
+
     }
 }

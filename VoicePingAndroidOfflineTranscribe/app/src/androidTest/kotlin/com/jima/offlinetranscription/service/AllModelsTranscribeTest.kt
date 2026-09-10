@@ -138,10 +138,7 @@ class AllModelsTranscribeTest {
                 modelType = model.sherpaModelType!!
             )
             EngineType.SHERPA_ONNX_STREAMING -> SherpaOnnxStreamingEngine()
-            EngineType.CACTUS -> CactusEngine(
-                cactusModelType = model.cactusModelType
-                    ?: error("cactusModelType is required for CACTUS models")
-            )
+            EngineType.CACTUS -> CactusEngine()
             EngineType.QWEN_ONNX -> QwenOnnxEngine()
             EngineType.QWEN_ASR -> QwenASREngine()
             EngineType.ANDROID_SPEECH -> AndroidSpeechEngine(

@@ -2,7 +2,6 @@ package com.voiceping.offlinetranscription.service
 
 import android.os.Build
 import android.util.Log
-import com.voiceping.offlinetranscription.model.CactusModelType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
@@ -18,9 +17,7 @@ import java.io.File
  * Audio is passed as Float32 [-1,1] directly to whisper_full().
  * Model files (.bin) are downloaded via the standard [ModelDownloader] flow.
  */
-class CactusEngine(
-    private val cactusModelType: CactusModelType
-) : AsrEngine {
+class CactusEngine : AsrEngine {
     companion object {
         private const val TAG = "CactusEngine"
         private const val MIN_SAMPLES = 16000 // 1 second at 16kHz

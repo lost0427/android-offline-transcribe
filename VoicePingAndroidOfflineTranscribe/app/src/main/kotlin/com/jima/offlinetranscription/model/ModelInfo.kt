@@ -2,7 +2,6 @@ package com.voiceping.offlinetranscription.model
 
 enum class EngineType { SHERPA_ONNX, SHERPA_ONNX_STREAMING, CACTUS, QWEN_ASR, QWEN_ONNX, ANDROID_SPEECH }
 enum class SherpaModelType { WHISPER, MOONSHINE, SENSE_VOICE, ZIPFORMER_TRANSDUCER, OMNILINGUAL_CTC, PARAKEET_TRANSDUCER }
-enum class CactusModelType { WHISPER }
 
 data class ModelFile(val url: String, val localName: String)
 
@@ -11,7 +10,6 @@ data class ModelInfo(
     val displayName: String,
     val engineType: EngineType,
     val sherpaModelType: SherpaModelType? = null,
-    val cactusModelType: CactusModelType? = null,
     val parameterCount: String,
     val sizeOnDisk: String,
     val description: String,
@@ -74,9 +72,10 @@ data class ModelInfo(
         private const val WHISPER_GGML_BASE_URL =
             "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/"
 
-        private val LEGACY_MODEL_ID_MAP = mapOf<String, String>(
-            // Both Qwen CPU and ONNX cards are kept as reference — no remapping
-        )
+        fun findById(id: String?): ModelInfo? {
+            if (id.isNullOrBlank()) return null
+            return availableModels.firstOrNull { it.id == id }
+        }
 
         private fun whisperFiles(baseUrl: String, prefix: String) = listOf(
             ModelFile("${baseUrl}${prefix}-encoder.int8.onnx", "encoder.int8.onnx"),
@@ -246,7 +245,6 @@ data class ModelInfo(
                 id = "cactus-whisper-tiny",
                 displayName = "Whisper Tiny (whisper.cpp)",
                 engineType = EngineType.CACTUS,
-                cactusModelType = CactusModelType.WHISPER,
                 parameterCount = "39M",
                 sizeOnDisk = "~31 MB",
                 description = "Whisper Tiny via whisper.cpp GGML. Q5_1 quantized, matching iOS.",
@@ -314,12 +312,6 @@ data class ModelInfo(
         )
 
         val defaultModel = availableModels.first { it.id == "sensevoice-small" }
-
-        fun findByIdOrLegacy(id: String?): ModelInfo? {
-            if (id.isNullOrBlank()) return null
-            val canonicalId = LEGACY_MODEL_ID_MAP[id] ?: id
-            return availableModels.firstOrNull { it.id == canonicalId }
-        }
 
         /** Group models by engine for UI display. */
         val modelsByEngine: Map<EngineType, List<ModelInfo>>

@@ -48,7 +48,7 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(Unit) {
                     if (isE2E && e2eModelId != null) {
                         // E2E test mode: select specific model, download, load, transcribe
-                        val model = ModelInfo.findByIdOrLegacy(e2eModelId)
+                        val model = ModelInfo.findById(e2eModelId)
                         if (model != null) {
                             Log.i("E2E", "Auto-test mode: selecting $e2eModelId")
                             // Lock E2E state to prevent DataStore collectors from

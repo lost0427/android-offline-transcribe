@@ -93,7 +93,7 @@ class AsrEngineTest {
 
     @Test
     fun modelCapabilities_areDeclaredWithoutModelSpecificUiBranches() {
-        val qwen = ModelInfo.findByIdOrLegacy("qwen3-asr-0.6b-onnx")!!
+        val qwen = ModelInfo.findById("qwen3-asr-0.6b-onnx")!!
         assertTrue(qwen.capabilities.languageAutoDetection)
         assertTrue(qwen.capabilities.forcedLanguage)
         assertEquals("INT8", qwen.capabilities.quantization)
@@ -105,7 +105,6 @@ class AsrEngineTest {
         assertEquals(1, PerformanceProfile.ECO.recommendedCpuThreads(1))
         assertEquals(4, PerformanceProfile.BALANCED.recommendedCpuThreads(6))
         assertEquals(6, PerformanceProfile.MAX_PERFORMANCE.recommendedCpuThreads(6))
-        assertEquals(6, PerformanceProfile.BENCHMARK.recommendedCpuThreads(6))
     }
 
     @Test

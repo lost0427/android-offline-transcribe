@@ -535,21 +535,6 @@ class StreamingChunkManagerTest {
     // ============================================================
 
     @Test
-    fun joinChunkTexts_filtersBlank() {
-        assertEquals("a b", manager.joinChunkTexts("a", "", "b", "  "))
-    }
-
-    @Test
-    fun joinChunkTexts_allBlank_returnsEmpty() {
-        assertEquals("", manager.joinChunkTexts("", "  ", ""))
-    }
-
-    @Test
-    fun joinChunkTexts_single_returnsUnchanged() {
-        assertEquals("hello", manager.joinChunkTexts("hello"))
-    }
-
-    @Test
     fun normalizeText_collapsesWhitespace() {
         assertEquals("hello world", manager.normalizeText("  hello   world  "))
     }

@@ -4,15 +4,14 @@ package com.voiceping.offlinetranscription.model
 enum class PerformanceProfile {
     ECO,
     BALANCED,
-    MAX_PERFORMANCE,
-    BENCHMARK;
+    MAX_PERFORMANCE;
 
     fun recommendedCpuThreads(availableProcessors: Int): Int {
         val cores = availableProcessors.coerceAtLeast(1)
         return when (this) {
             ECO -> (cores / 2).coerceAtLeast(1)
             BALANCED -> (cores * 3 / 4).coerceIn(1, cores)
-            MAX_PERFORMANCE, BENCHMARK -> cores
+            MAX_PERFORMANCE -> cores
         }
     }
 }

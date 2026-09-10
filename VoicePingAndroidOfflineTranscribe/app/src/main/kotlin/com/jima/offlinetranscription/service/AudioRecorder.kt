@@ -29,7 +29,6 @@ import kotlin.coroutines.coroutineContext
 class AudioRecorder(private val context: Context) {
 
     companion object {
-        const val SAMPLE_RATE = AudioConstants.SAMPLE_RATE
         private const val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
         private const val CHUNK_SIZE = AudioConstants.SAMPLE_RATE / 10 // 100ms at 16kHz
     }
@@ -59,11 +58,10 @@ class AudioRecorder(private val context: Context) {
     }
 
     private var audioRecord: AudioRecord? = null
-    private var activeConfig: RecorderConfig? = null
     private var preferredConfig: RecorderConfig? = null
     private var mediaProjection: MediaProjection? = null
     // Use ArrayList with initial capacity to reduce reallocation overhead
-    private val audioBuffer = ArrayList<Float>(SAMPLE_RATE * 60) // Pre-allocate ~1 min
+    private val audioBuffer = ArrayList<Float>(AudioConstants.SAMPLE_RATE * 60) // Pre-allocate ~1 min
     private val energyHistory = ArrayList<Float>(500)
     private var droppedSampleCount = 0
 
@@ -108,7 +106,7 @@ class AudioRecorder(private val context: Context) {
         get() = synchronized(energyHistory) { energyHistory.toList() }
 
     val bufferSeconds: Double
-        get() = synchronized(audioBuffer) { (droppedSampleCount + audioBuffer.size).toDouble() / SAMPLE_RATE }
+        get() = synchronized(audioBuffer) { (droppedSampleCount + audioBuffer.size).toDouble() / AudioConstants.SAMPLE_RATE }
 
     val maxRecentEnergy: Float
         get() = synchronized(energyHistory) { energyHistory.takeLast(AudioConstants.RECENT_ENERGY_WINDOW).maxOrNull() ?: 0f }
@@ -199,12 +197,10 @@ class AudioRecorder(private val context: Context) {
         }
 
         audioRecord = record
-        activeConfig = config
         record.startRecording()
         if (record.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
             record.release()
             audioRecord = null
-            activeConfig = null
             throw IllegalStateException("AudioRecord failed to enter RECORDSTATE_RECORDING")
         }
 
@@ -231,7 +227,6 @@ class AudioRecorder(private val context: Context) {
         }
         audioRecord?.release()
         audioRecord = null
-        activeConfig = null
     }
 
     /** Inject pre-recorded samples into the buffer (for testing without mic). */
@@ -330,7 +325,7 @@ class AudioRecorder(private val context: Context) {
             ?: throw IllegalStateException("System playback capture permission not granted")
 
         val minBufferSize = AudioRecord.getMinBufferSize(
-            SAMPLE_RATE,
+            AudioConstants.SAMPLE_RATE,
             CHANNEL_CONFIG,
             AudioFormat.ENCODING_PCM_16BIT
         )
@@ -341,7 +336,7 @@ class AudioRecorder(private val context: Context) {
         val bufferSizeInBytes = maxOf(minBufferSize, desiredBufferSize)
 
         val format = AudioFormat.Builder()
-            .setSampleRate(SAMPLE_RATE)
+            .setSampleRate(AudioConstants.SAMPLE_RATE)
             .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
             .setChannelMask(CHANNEL_CONFIG)
             .build()
@@ -374,7 +369,7 @@ class AudioRecorder(private val context: Context) {
     @SuppressLint("MissingPermission")
     private fun createAudioRecord(source: RecorderSource, format: RecorderFormat): AudioRecord {
         val minBufferSize = AudioRecord.getMinBufferSize(
-            SAMPLE_RATE,
+            AudioConstants.SAMPLE_RATE,
             CHANNEL_CONFIG,
             format.audioEncoding
         )
@@ -387,7 +382,7 @@ class AudioRecorder(private val context: Context) {
 
         return AudioRecord(
             source.source,
-            SAMPLE_RATE,
+            AudioConstants.SAMPLE_RATE,
             CHANNEL_CONFIG,
             format.audioEncoding,
             bufferSizeInBytes

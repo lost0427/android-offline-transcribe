@@ -81,14 +81,14 @@ class TranscriptionViewModel(
 
     fun startRecordingWithPreparation() {
         launchEngineAction {
-            engine.prewarmRealtimePath()
+            engine.prewarmRecordingPath()
             engine.startRecording()
         }
     }
 
     fun prewarmOnScreenOpen() {
         launchEngineAction {
-            engine.prewarmRealtimePath()
+            engine.prewarmRecordingPath()
         }
     }
 
