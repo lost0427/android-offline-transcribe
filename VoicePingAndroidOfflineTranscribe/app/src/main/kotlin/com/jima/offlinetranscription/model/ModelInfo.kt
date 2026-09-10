@@ -72,9 +72,10 @@ data class ModelInfo(
         private const val WHISPER_GGML_BASE_URL =
             "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/"
 
-        private val LEGACY_MODEL_ID_MAP = mapOf<String, String>(
-            // Both Qwen CPU and ONNX cards are kept as reference — no remapping
-        )
+        fun findById(id: String?): ModelInfo? {
+            if (id.isNullOrBlank()) return null
+            return availableModels.firstOrNull { it.id == id }
+        }
 
         private fun whisperFiles(baseUrl: String, prefix: String) = listOf(
             ModelFile("${baseUrl}${prefix}-encoder.int8.onnx", "encoder.int8.onnx"),
@@ -311,12 +312,6 @@ data class ModelInfo(
         )
 
         val defaultModel = availableModels.first { it.id == "sensevoice-small" }
-
-        fun findByIdOrLegacy(id: String?): ModelInfo? {
-            if (id.isNullOrBlank()) return null
-            val canonicalId = LEGACY_MODEL_ID_MAP[id] ?: id
-            return availableModels.firstOrNull { it.id == canonicalId }
-        }
 
         /** Group models by engine for UI display. */
         val modelsByEngine: Map<EngineType, List<ModelInfo>>

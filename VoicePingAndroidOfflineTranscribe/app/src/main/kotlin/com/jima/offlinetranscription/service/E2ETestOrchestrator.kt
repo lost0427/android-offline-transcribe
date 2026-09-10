@@ -118,7 +118,7 @@ class E2ETestOrchestrator(
     }
 
     fun writeFailure(modelId: String = engine.selectedModel.value.id, error: String) {
-        val model = ModelInfo.findByIdOrLegacy(modelId) ?: engine.selectedModel.value
+        val model = ModelInfo.findById(modelId) ?: engine.selectedModel.value
         val json = JSONObject().apply {
             put("model_id", modelId)
             put("engine", model.inferenceMethod)
@@ -138,7 +138,7 @@ class E2ETestOrchestrator(
     }
 
     fun writeSkipped(modelId: String = engine.selectedModel.value.id, reason: String) {
-        val model = ModelInfo.findByIdOrLegacy(modelId) ?: engine.selectedModel.value
+        val model = ModelInfo.findById(modelId) ?: engine.selectedModel.value
         val json = JSONObject().apply {
             put("model_id", modelId)
             put("engine", model.inferenceMethod)

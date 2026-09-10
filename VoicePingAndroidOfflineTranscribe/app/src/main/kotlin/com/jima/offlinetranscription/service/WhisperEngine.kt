@@ -235,7 +235,7 @@ class WhisperEngine(
             preferences.selectedModelId.collect { savedId ->
                 if (e2eLocked) return@collect
                 if (savedId != null) {
-                    ModelInfo.findByIdOrLegacy(savedId)?.let {
+                    ModelInfo.findById(savedId)?.let {
                         _selectedModel.value = it
                     }
                 }
@@ -332,7 +332,7 @@ class WhisperEngine(
     /** Ensure startup model selection reflects persisted user preference before loading. */
     suspend fun syncSelectedModelFromPreferences() {
         val savedId = preferences.selectedModelId.first() ?: return
-        val savedModel = ModelInfo.findByIdOrLegacy(savedId) ?: return
+        val savedModel = ModelInfo.findById(savedId) ?: return
         _selectedModel.value = savedModel
     }
 

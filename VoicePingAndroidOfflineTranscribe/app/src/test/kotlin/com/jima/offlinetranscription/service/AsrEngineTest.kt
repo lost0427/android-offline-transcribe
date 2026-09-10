@@ -93,7 +93,7 @@ class AsrEngineTest {
 
     @Test
     fun modelCapabilities_areDeclaredWithoutModelSpecificUiBranches() {
-        val qwen = ModelInfo.findByIdOrLegacy("qwen3-asr-0.6b-onnx")!!
+        val qwen = ModelInfo.findById("qwen3-asr-0.6b-onnx")!!
         assertTrue(qwen.capabilities.languageAutoDetection)
         assertTrue(qwen.capabilities.forcedLanguage)
         assertEquals("INT8", qwen.capabilities.quantization)
