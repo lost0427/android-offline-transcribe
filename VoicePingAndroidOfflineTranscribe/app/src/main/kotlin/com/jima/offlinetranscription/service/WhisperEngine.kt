@@ -850,7 +850,7 @@ class WhisperEngine(
 
         resetTranscriptionState()
         transitionTo(SessionState.Recording)
-        _hypothesisText.value = "Transcribing file..."
+        _hypothesisText.value = "Decoding audio…"
 
         // File decode can be CPU-heavy (especially omnilingual); keep it off main.
         val pcmFile = File(context.cacheDir, "transcribe-${System.currentTimeMillis()}.pcm")
@@ -858,7 +858,7 @@ class WhisperEngine(
             try {
                 Log.i("WhisperEngine", "transcribeFile: reading $filePath")
                 val totalSamples = withContext(Dispatchers.IO) {
-                    decodeAudioFileTo16kPcm(filePath, pcmFile)
+                    decodeAudioFileTo16kPcm(filePath, pcmFile) { msg -> _hypothesisText.value = msg }
                 }
                 val peakGain = withContext(Dispatchers.IO) { computePcmPeakGain(pcmFile) }
                 if (peakGain > 1f) Log.i("WhisperEngine", "transcribeFile: quiet audio, applying gain x$peakGain")
@@ -880,7 +880,10 @@ class WhisperEngine(
                         readPcm16(pcmFile, 0, totalSamples.toInt(), peakGain), languageHint
                     )
                 } else {
-                    transcribePcmSlices(engine, pcmFile, totalSamples, numThreads, languageHint, peakGain) { sliceSegs, sliceElapsedSec ->
+                    transcribePcmSlices(
+                        engine, pcmFile, totalSamples, numThreads, languageHint, peakGain,
+                        onProgress = { msg -> _hypothesisText.value = msg }
+                    ) { sliceSegs, sliceElapsedSec ->
                         chunkManager.confirmedSegments.addAll(sliceSegs)
                         val rendered = chunkManager.renderSegmentsText(chunkManager.confirmedSegments)
                         chunkManager.confirmedText = rendered
@@ -1002,13 +1005,15 @@ class WhisperEngine(
         numThreads: Int,
         languageHint: String,
         peakGain: Float,
+        onProgress: (String) -> Unit = {},
         onSlice: (List<TranscriptionSegment>, Double) -> Unit
     ): List<TranscriptionSegment> {
         if (sileroVad.state.value == ModelState.Unloaded && sileroVad.isDownloaded()) {
             sileroVad.prepare(download = false)
         }
         val slices = if (sileroVad.state.value == ModelState.Loaded) {
-            detectVadWindows(pcm, totalSamples, peakGain)
+            onProgress("Detecting speech…")
+            detectVadWindows(pcm, totalSamples, peakGain, onProgress)
         } else {
             emptyList()
         }
@@ -1031,13 +1036,20 @@ class WhisperEngine(
             // ponytail: fixed 30 s windows when VAD is unavailable — seams may clip a word mid-air.
             val window = 30L * sr
             var s = 0L
+            var lastPct = -1
             while (s < totalSamples) {
                 val count = minOf(window, totalSamples - s).toInt()
                 runSlice(readPcm16(pcm, s, count, peakGain), s * 1000 / sr)
                 s += count
+                val pct = ((s * 100) / totalSamples).toInt().coerceIn(0, 100)
+                if (pct >= lastPct + 5 || s >= totalSamples) {
+                    lastPct = pct
+                    onProgress("Transcribing… $pct%")
+                }
             }
             return merged
         }
+        onProgress("Transcribing…")
         for (slice in slices) {
             val from = (slice.startMs * sr / 1000).coerceIn(0L, totalSamples - 1)
             val to = (slice.endMs * sr / 1000).coerceIn(from, totalSamples)
@@ -1049,11 +1061,17 @@ class WhisperEngine(
 
     /** Run VAD over the PCM file in 60 s windows; speech still open at a seam reappears
      *  complete in the next window, so truncated-at-seam segments are dropped here. */
-    private fun detectVadWindows(pcm: File, totalSamples: Long, gain: Float): List<VadSegment> {
+    private fun detectVadWindows(
+        pcm: File,
+        totalSamples: Long,
+        gain: Float,
+        onProgress: (String) -> Unit = {}
+    ): List<VadSegment> {
         val sr = AudioConstants.SAMPLE_RATE.toLong()
         val windowSamples = 60L * sr
         val results = mutableListOf<VadSegment>()
         var start = 0L
+        var lastPct = -1
         while (start < totalSamples) {
             val count = minOf(windowSamples, totalSamples - start).toInt()
             val windowMs = count * 1000 / sr
@@ -1066,6 +1084,11 @@ class WhisperEngine(
                 )
             }
             start += count
+            val pct = ((start * 100) / totalSamples).toInt().coerceIn(0, 100)
+            if (pct >= lastPct + 2 || start >= totalSamples) {
+                lastPct = pct
+                onProgress("Detecting speech… $pct%")
+            }
         }
         return results
     }
@@ -1188,7 +1211,11 @@ class WhisperEngine(
      *  files work within the 256 MB app heap. ponytail: linear-interp resample runs per
      *  codec chunk on the global sample grid (1-sample carry) — ±1 sample error per chunk, inaudible.
      *  Returns total 16k sample count. */
-    private fun decodeAudioFileTo16kPcm(filePath: String, out: File): Long {
+    private fun decodeAudioFileTo16kPcm(
+        filePath: String,
+        out: File,
+        onProgress: (String) -> Unit = {}
+    ): Long {
         val extractor = MediaExtractor()
         var codec: MediaCodec? = null
         try {
@@ -1198,6 +1225,9 @@ class WhisperEngine(
             } ?: throw IllegalArgumentException("No audio track found")
             val format = extractor.getTrackFormat(track)
             val mime = format.getString(MediaFormat.KEY_MIME) ?: throw IllegalArgumentException("Audio MIME missing")
+            val trackDurationUs = if (format.containsKey(MediaFormat.KEY_DURATION)) {
+                format.getLong(MediaFormat.KEY_DURATION)
+            } else 0L
             extractor.selectTrack(track)
             codec = MediaCodec.createDecoderByType(mime).also { it.configure(format, null, null, 0); it.start() }
 
@@ -1259,6 +1289,7 @@ class WhisperEngine(
                 val info = MediaCodec.BufferInfo()
                 var inputDone = false
                 var outputDone = false
+                var lastDecodePct = -1
                 while (!outputDone) {
                     if (!inputDone) {
                         val index = codec.dequeueInputBuffer(10_000)
@@ -1269,8 +1300,16 @@ class WhisperEngine(
                                 codec.queueInputBuffer(index, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
                                 inputDone = true
                             } else {
-                                codec.queueInputBuffer(index, 0, size, extractor.sampleTime, 0)
+                                val sampleTimeUs = extractor.sampleTime
+                                codec.queueInputBuffer(index, 0, size, sampleTimeUs, 0)
                                 extractor.advance()
+                                if (trackDurationUs > 0) {
+                                    val pct = ((sampleTimeUs * 100) / trackDurationUs).toInt().coerceIn(0, 100)
+                                    if (pct >= lastDecodePct + 2) {
+                                        lastDecodePct = pct
+                                        onProgress("Decoding audio… $pct%")
+                                    }
+                                }
                             }
                         }
                     }
