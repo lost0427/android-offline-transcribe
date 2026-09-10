@@ -23,11 +23,6 @@ import kotlin.coroutines.resumeWithException
 class MlKitTranslator {
     companion object {
         private const val TAG = "MlKitTranslator"
-
-        /** Map of BCP-47 codes to ML Kit TranslateLanguage codes. */
-        val SUPPORTED_LANGUAGES: Map<String, String> by lazy {
-            TranslateLanguage.getAllLanguages().associateBy { it }
-        }
     }
 
     private var translator: Translator? = null
