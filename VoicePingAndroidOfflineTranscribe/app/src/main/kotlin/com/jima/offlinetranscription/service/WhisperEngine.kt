@@ -868,6 +868,7 @@ class WhisperEngine(
                 val numThreads = inferenceThreadCount()
                 Log.i("WhisperEngine", "transcribeFile: starting transcription with $numThreads threads")
                 var progressiveText: String? = null
+                val recentRates = ArrayDeque<Pair<Int, Double>>()
                 val segments = if (engine is AndroidSpeechEngine && Build.VERSION.SDK_INT < 33 && e2eLocked) {
                     // On API < 33, SpeechRecognizer can't accept file audio directly.
                     // For E2E benchmarks, attempt acoustic loopback (speaker -> mic).
@@ -876,12 +877,22 @@ class WhisperEngine(
                         readPcm16(pcmFile, 0, totalSamples.toInt()), languageHint
                     )
                 } else {
-                    transcribePcmSlices(engine, pcmFile, totalSamples, numThreads, languageHint) { sliceSegs ->
+                    transcribePcmSlices(engine, pcmFile, totalSamples, numThreads, languageHint) { sliceSegs, sliceElapsedSec ->
                         chunkManager.confirmedSegments.addAll(sliceSegs)
                         val rendered = chunkManager.renderSegmentsText(chunkManager.confirmedSegments)
                         chunkManager.confirmedText = rendered
                         _confirmedText.value = rendered
                         progressiveText = rendered
+                        // Rolling tokens/s over the last 5 slices; silent slices don't dilute it.
+                        val words = sliceSegs.sumOf { it.text.split(" ").size }
+                        if (words > 0) {
+                            recentRates.addLast(words to sliceElapsedSec)
+                            if (recentRates.size > 5) recentRates.removeFirst()
+                            val windowSec = recentRates.sumOf { it.second }
+                            if (windowSec > 0) {
+                                _tokensPerSecond.value = recentRates.sumOf { it.first } / windowSec
+                            }
+                        }
                     }
                 }
 
@@ -979,14 +990,15 @@ class WhisperEngine(
     }
 
     /** Transcribe a decoded 16k PCM file, sliced by Silero VAD when ready. Falls back to fixed 30 s windows.
-     *  [onSlice] fires after each slice so the UI can show text progressively. */
+     *  [onSlice] fires after each slice with its wall time, so the UI can show text and
+     *  tokens/s progressively. */
     private suspend fun transcribePcmSlices(
         engine: AsrEngine,
         pcm: File,
         totalSamples: Long,
         numThreads: Int,
         languageHint: String,
-        onSlice: (List<TranscriptionSegment>) -> Unit
+        onSlice: (List<TranscriptionSegment>, Double) -> Unit
     ): List<TranscriptionSegment> {
         if (sileroVad.state.value == ModelState.Unloaded && sileroVad.isDownloaded()) {
             sileroVad.prepare(download = false)
@@ -999,10 +1011,11 @@ class WhisperEngine(
         val sr = AudioConstants.SAMPLE_RATE.toLong()
         val merged = mutableListOf<TranscriptionSegment>()
         suspend fun runSlice(samples: FloatArray, offsetMs: Long) {
+            val sliceStart = System.nanoTime()
             val segs = engine.transcribe(samples, numThreads, languageHint)
                 .map { it.copy(startMs = it.startMs + offsetMs, endMs = it.endMs + offsetMs) }
+            onSlice(segs, (System.nanoTime() - sliceStart) / 1_000_000_000.0)
             merged += segs
-            onSlice(segs)
         }
         if (slices.isEmpty()) {
             // ponytail: fixed 30 s windows when VAD is unavailable — seams may clip a word mid-air.
