@@ -867,6 +867,7 @@ class WhisperEngine(
                 val startTime = System.nanoTime()
                 val numThreads = inferenceThreadCount()
                 Log.i("WhisperEngine", "transcribeFile: starting transcription with $numThreads threads")
+                var progressiveText: String? = null
                 val segments = if (engine is AndroidSpeechEngine && Build.VERSION.SDK_INT < 33 && e2eLocked) {
                     // On API < 33, SpeechRecognizer can't accept file audio directly.
                     // For E2E benchmarks, attempt acoustic loopback (speaker -> mic).
@@ -875,7 +876,13 @@ class WhisperEngine(
                         readPcm16(pcmFile, 0, totalSamples.toInt()), languageHint
                     )
                 } else {
-                    transcribePcmSlices(engine, pcmFile, totalSamples, numThreads, languageHint)
+                    transcribePcmSlices(engine, pcmFile, totalSamples, numThreads, languageHint) { sliceSegs ->
+                        chunkManager.confirmedSegments.addAll(sliceSegs)
+                        val rendered = chunkManager.renderSegmentsText(chunkManager.confirmedSegments)
+                        chunkManager.confirmedText = rendered
+                        _confirmedText.value = rendered
+                        progressiveText = rendered
+                    }
                 }
 
                 val elapsed = (System.nanoTime() - startTime) / 1_000_000_000.0
@@ -891,10 +898,13 @@ class WhisperEngine(
                     applyDetectedLanguageToTranslation(lang)
                 }
 
-                chunkManager.confirmedSegments.addAll(segments)
-                val renderedText = chunkManager.renderSegmentsText(segments)
-                chunkManager.confirmedText = renderedText
-                _confirmedText.value = renderedText
+                val renderedText = progressiveText ?: run {
+                    chunkManager.confirmedSegments.addAll(segments)
+                    chunkManager.renderSegmentsText(segments).also {
+                        chunkManager.confirmedText = it
+                        _confirmedText.value = it
+                    }
+                }
                 _hypothesisText.value = ""
                 val model = _selectedModel.value
                 val skipReason = when {
@@ -968,13 +978,15 @@ class WhisperEngine(
         e2eOrchestrator.writeFailure(modelId = modelId, error = error)
     }
 
-    /** Transcribe a decoded 16k PCM file, sliced by Silero VAD when ready. Falls back to fixed 30 s windows. */
+    /** Transcribe a decoded 16k PCM file, sliced by Silero VAD when ready. Falls back to fixed 30 s windows.
+     *  [onSlice] fires after each slice so the UI can show text progressively. */
     private suspend fun transcribePcmSlices(
         engine: AsrEngine,
         pcm: File,
         totalSamples: Long,
         numThreads: Int,
-        languageHint: String
+        languageHint: String,
+        onSlice: (List<TranscriptionSegment>) -> Unit
     ): List<TranscriptionSegment> {
         if (sileroVad.state.value == ModelState.Unloaded && sileroVad.isDownloaded()) {
             sileroVad.prepare(download = false)
@@ -986,15 +998,19 @@ class WhisperEngine(
         }
         val sr = AudioConstants.SAMPLE_RATE.toLong()
         val merged = mutableListOf<TranscriptionSegment>()
+        suspend fun runSlice(samples: FloatArray, offsetMs: Long) {
+            val segs = engine.transcribe(samples, numThreads, languageHint)
+                .map { it.copy(startMs = it.startMs + offsetMs, endMs = it.endMs + offsetMs) }
+            merged += segs
+            onSlice(segs)
+        }
         if (slices.isEmpty()) {
             // ponytail: fixed 30 s windows when VAD is unavailable — seams may clip a word mid-air.
             val window = 30L * sr
             var s = 0L
             while (s < totalSamples) {
                 val count = minOf(window, totalSamples - s).toInt()
-                val offsetMs = s * 1000 / sr
-                merged += engine.transcribe(readPcm16(pcm, s, count), numThreads, languageHint)
-                    .map { it.copy(startMs = it.startMs + offsetMs, endMs = it.endMs + offsetMs) }
+                runSlice(readPcm16(pcm, s, count), s * 1000 / sr)
                 s += count
             }
             return merged
@@ -1003,9 +1019,7 @@ class WhisperEngine(
             val from = (slice.startMs * sr / 1000).coerceIn(0L, totalSamples - 1)
             val to = (slice.endMs * sr / 1000).coerceIn(from, totalSamples)
             if (to <= from) continue
-            val offsetMs = from * 1000 / sr
-            merged += engine.transcribe(readPcm16(pcm, from, (to - from).toInt()), numThreads, languageHint)
-                .map { it.copy(startMs = it.startMs + offsetMs, endMs = it.endMs + offsetMs) }
+            runSlice(readPcm16(pcm, from, (to - from).toInt()), from * 1000 / sr)
         }
         return merged
     }
