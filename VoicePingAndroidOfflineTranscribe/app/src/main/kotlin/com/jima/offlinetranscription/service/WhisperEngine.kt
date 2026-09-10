@@ -403,7 +403,7 @@ class WhisperEngine(
                     _modelState.value = ModelState.Unloaded
                     _lastError.value = AppError.InsufficientStorage(
                         needed = model.sizeOnDisk,
-                        available = formatBytes(available)
+                        available = android.text.format.Formatter.formatFileSize(context, available)
                     )
                     return@withLock
                 }
@@ -1013,7 +1013,7 @@ class WhisperEngine(
     }
 
     private fun mapDownloadError(error: Throwable): AppError {
-        val root = rootCause(error)
+        val root = generateSequence(error) { it.cause }.last()
         return when {
             !hasValidatedInternetConnection() -> AppError.NetworkUnavailable()
             root is UnknownHostException -> AppError.NetworkUnavailable()
@@ -1022,16 +1022,6 @@ class WhisperEngine(
             )
             else -> AppError.ModelDownloadFailed(error)
         }
-    }
-
-    private fun rootCause(error: Throwable): Throwable {
-        var cause = error
-        var next = cause.cause
-        while (next != null && next !== cause) {
-            cause = next
-            next = cause.cause
-        }
-        return cause
     }
 
     private fun parseModelSize(sizeStr: String): Long {
@@ -1046,15 +1036,6 @@ class WhisperEngine(
             else -> 0L
         }
     }
-
-    private fun formatBytes(bytes: Long): String {
-        return when {
-            bytes >= 1024L * 1024 * 1024 -> String.format("%.1f GB", bytes / (1024.0 * 1024 * 1024))
-            bytes >= 1024L * 1024 -> String.format("%.0f MB", bytes / (1024.0 * 1024))
-            else -> String.format("%.0f KB", bytes / 1024.0)
-        }
-    }
-
 
     internal fun scheduleTranslationUpdate() {
         translationJob?.cancel()
