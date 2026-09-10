@@ -25,6 +25,6 @@ class ModelSetupViewModel(val engine: WhisperEngine) : ViewModel() {
     val vadError = engine.sileroVad.error
 
     fun downloadVad() {
-        engine.downloadVadModel()
+        viewModelScope.launch { runCatching { engine.sileroVad.prepare(download = true) } }
     }
 }

@@ -368,10 +368,6 @@ class WhisperEngine(
 
     fun isModelDownloaded(model: ModelInfo): Boolean = downloader.isModelDownloaded(model)
 
-    fun downloadVadModel() {
-        scope.launch { runCatching { sileroVad.prepare(download = true) } }
-    }
-
     fun setSelectedModel(model: ModelInfo) {
         _selectedModel.value = model
         chunkManager = transcriptionCoordinator.createChunkManagerForModel(model)

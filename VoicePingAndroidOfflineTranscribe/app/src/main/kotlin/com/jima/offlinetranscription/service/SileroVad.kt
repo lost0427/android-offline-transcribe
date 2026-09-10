@@ -12,12 +12,6 @@ class SileroVad(private val modelsDir: File, private val downloader: ModelDownlo
         private const val ID = "silero-vad-v6.2.0"
         private const val URL = "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin"
         private const val FILE = "ggml-silero-v6.2.0.bin"
-        const val THRESHOLD = 0.35f
-        const val MIN_SPEECH_MS = 100
-        const val MIN_SILENCE_MS = 700
-        const val MAX_SPEECH_SECONDS = 30f
-        const val SPEECH_PAD_MS = 400
-        const val OVERLAP_SECONDS = 0.5f
     }
 
     private val _state = MutableStateFlow(ModelState.Unloaded)
@@ -52,8 +46,7 @@ class SileroVad(private val modelsDir: File, private val downloader: ModelDownlo
 
     fun detect(samples: FloatArray): List<VadSegment> {
         if (pointer == 0L) return emptyList()
-        val flat = WhisperCppLib.detectVad(pointer, samples, THRESHOLD, MIN_SPEECH_MS, MIN_SILENCE_MS,
-            MAX_SPEECH_SECONDS, SPEECH_PAD_MS, OVERLAP_SECONDS)
+        val flat = WhisperCppLib.detectVad(pointer, samples)
         return flat.toList().chunked(2).map { (startMs, endMs) -> VadSegment(startMs.toLong(), endMs.toLong()) }
     }
 
