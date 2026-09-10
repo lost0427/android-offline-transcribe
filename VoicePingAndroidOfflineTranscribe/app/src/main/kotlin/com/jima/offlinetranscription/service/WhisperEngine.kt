@@ -432,7 +432,6 @@ class WhisperEngine(
             prewarmedModelId = null
             _modelState.value = ModelState.Loaded
             preferences.setSelectedModelId(model.id)
-            preferences.setLastModelPath(modelPath)
             if (previousEngine != null && previousEngine !== engine) {
                 withContext(Dispatchers.Default) {
                     previousEngine.release()

@@ -18,7 +18,6 @@ class AppPreferences(private val context: Context) {
 
     companion object {
         private val SELECTED_MODEL_ID = stringPreferencesKey("selected_model_id")
-        private val LAST_MODEL_PATH = stringPreferencesKey("last_model_path")
         private val USE_VAD = booleanPreferencesKey("use_vad")
         private val ENABLE_TIMESTAMPS = booleanPreferencesKey("enable_timestamps")
         private val TRANSLATION_ENABLED = booleanPreferencesKey("translation_enabled")
@@ -39,7 +38,6 @@ class AppPreferences(private val context: Context) {
     }
 
     val selectedModelId: Flow<String?> = preferenceFlow { it[SELECTED_MODEL_ID] }
-    val lastModelPath: Flow<String?> = preferenceFlow { it[LAST_MODEL_PATH] }
     val useVAD: Flow<Boolean> = preferenceFlow { it[USE_VAD] ?: true }
     val enableTimestamps: Flow<Boolean> = preferenceFlow { it[ENABLE_TIMESTAMPS] ?: true }
     val translationEnabled: Flow<Boolean> = preferenceFlow { it[TRANSLATION_ENABLED] ?: false }
@@ -52,10 +50,6 @@ class AppPreferences(private val context: Context) {
 
     suspend fun setSelectedModelId(id: String) {
         context.dataStore.edit { it[SELECTED_MODEL_ID] = id }
-    }
-
-    suspend fun setLastModelPath(path: String) {
-        context.dataStore.edit { it[LAST_MODEL_PATH] = path }
     }
 
     suspend fun setUseVAD(enabled: Boolean) {
