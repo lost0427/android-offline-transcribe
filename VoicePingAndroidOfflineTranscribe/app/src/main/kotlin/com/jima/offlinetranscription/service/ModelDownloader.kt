@@ -1,6 +1,7 @@
 package com.voiceping.offlinetranscription.service
 
 import com.voiceping.offlinetranscription.model.ModelInfo
+import com.voiceping.offlinetranscription.model.ModelFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -55,19 +56,21 @@ class ModelDownloader(private val modelsDir: File) {
     }
 
     /** Downloads all files for a model, emitting overall progress (0.0 to 1.0). */
-    fun download(model: ModelInfo): Flow<Float> = flow {
-        if (model.files.isEmpty()) {
-            modelDir(model).mkdirs()
+    fun download(model: ModelInfo): Flow<Float> = download(model.id, model.files)
+
+    fun download(id: String, files: List<ModelFile>): Flow<Float> = flow {
+        val dir = File(modelsDir, id)
+        if (files.isEmpty()) {
+            dir.mkdirs()
             emit(1.0f)
             return@flow
         }
 
-        val dir = modelDir(model)
         dir.mkdirs()
-        pruneStaleModelFiles(dir, model)
+        pruneStaleModelFiles(dir, files)
 
-        val totalFiles = model.files.size
-        for ((fileIndex, modelFile) in model.files.withIndex()) {
+        val totalFiles = files.size
+        for ((fileIndex, modelFile) in files.withIndex()) {
             val targetFile = File(dir, modelFile.localName)
 
             // Skip already downloaded files
@@ -145,8 +148,8 @@ class ModelDownloader(private val modelsDir: File) {
      * Remove stale artifacts from previous model revisions in the same model ID directory.
      * This prevents mixing incompatible ONNX file sets (e.g. old and new Zipformer variants).
      */
-    private fun pruneStaleModelFiles(dir: File, model: ModelInfo) {
-        val expected = model.files.map { it.localName }.toSet()
+    private fun pruneStaleModelFiles(dir: File, files: List<ModelFile>) {
+        val expected = files.map { it.localName }.toSet()
         dir.listFiles()?.forEach { file ->
             if (!file.isFile) return@forEach
 

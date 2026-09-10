@@ -19,4 +19,12 @@ class ModelSetupViewModel(val engine: WhisperEngine) : ViewModel() {
     }
 
     fun isModelDownloaded(model: ModelInfo): Boolean = engine.isModelDownloaded(model)
+
+    val vadState = engine.sileroVad.state
+    val vadProgress = engine.sileroVad.progress
+    val vadError = engine.sileroVad.error
+
+    fun downloadVad() {
+        engine.downloadVadModel()
+    }
 }

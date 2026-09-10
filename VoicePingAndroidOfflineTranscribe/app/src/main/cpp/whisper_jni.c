@@ -165,3 +165,17 @@ Java_com_voiceping_offlinetranscription_service_WhisperCppLib_getSystemInfo(
     const char *info = whisper_print_system_info();
     return (*env)->NewStringUTF(env, info);
 }
+
+JNIEXPORT jlong JNICALL Java_com_voiceping_offlinetranscription_service_WhisperCppLib_initVad(JNIEnv *env, jobject thiz, jstring path, jint threads) {
+    (void)thiz;
+    const char *p = (*env)->GetStringUTFChars(env, path, NULL);
+    struct whisper_vad_context_params cp = whisper_vad_default_context_params();
+    cp.n_threads = threads;
+    struct whisper_vad_context *ctx = whisper_vad_init_from_file_with_params(p, cp);
+    (*env)->ReleaseStringUTFChars(env, path, p);
+    return (jlong)ctx;
+}
+
+JNIEXPORT void JNICALL Java_com_voiceping_offlinetranscription_service_WhisperCppLib_freeVad(JNIEnv *env, jobject thiz, jlong ptr) {
+    (void)env; (void)thiz; whisper_vad_free((struct whisper_vad_context *)ptr);
+}

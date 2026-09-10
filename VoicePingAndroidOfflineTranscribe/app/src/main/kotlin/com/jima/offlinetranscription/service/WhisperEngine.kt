@@ -57,6 +57,7 @@ class WhisperEngine(
     // whisper.cpp/sherpa directories as "downloaded" and skip its own download.
     private val modelsDir = File(context.filesDir, "asr_models")
     private val downloader = ModelDownloader(modelsDir)
+    val sileroVad = SileroVad(modelsDir, downloader)
     val audioRecorder = AudioRecorder(context)
 
     // Model state
@@ -366,6 +367,10 @@ class WhisperEngine(
     }
 
     fun isModelDownloaded(model: ModelInfo): Boolean = downloader.isModelDownloaded(model)
+
+    fun downloadVadModel() {
+        scope.launch { runCatching { sileroVad.prepare(download = true) } }
+    }
 
     fun setSelectedModel(model: ModelInfo) {
         _selectedModel.value = model

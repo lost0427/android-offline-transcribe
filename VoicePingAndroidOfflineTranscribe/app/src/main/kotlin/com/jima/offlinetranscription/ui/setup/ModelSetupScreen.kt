@@ -5,6 +5,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -25,6 +27,9 @@ fun ModelSetupScreen(viewModel: ModelSetupViewModel) {
     val downloadProgress by viewModel.downloadProgress.collectAsState()
     val selectedModel by viewModel.selectedModel.collectAsState()
     val lastError by viewModel.lastError.collectAsState()
+    val vadState by viewModel.vadState.collectAsState()
+    val vadProgress by viewModel.vadProgress.collectAsState()
+    val vadError by viewModel.vadError.collectAsState()
 
     Scaffold(
         topBar = {
@@ -73,6 +78,25 @@ fun ModelSetupScreen(viewModel: ModelSetupViewModel) {
             Spacer(modifier = Modifier.height(12.dp))
 
             val isBusy = modelState == ModelState.Downloading || modelState == ModelState.Loading
+
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Silero VAD v6.2.0", style = MaterialTheme.typography.titleMedium)
+                    Text("864 KiB", style = MaterialTheme.typography.bodySmall)
+                }
+                when (vadState) {
+                    ModelState.Loaded -> Icon(Icons.Filled.CheckCircle, "VAD ready")
+                    ModelState.Downloading -> CircularProgressIndicator(
+                        progress = { vadProgress }, modifier = Modifier.size(24.dp)
+                    )
+                    ModelState.Loading -> CircularProgressIndicator(Modifier.size(24.dp))
+                    else -> IconButton(onClick = viewModel::downloadVad, enabled = !isBusy) {
+                        Icon(Icons.Filled.Download, "Download Silero VAD")
+                    }
+                }
+            }
+            vadError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            HorizontalDivider(Modifier.padding(vertical = 12.dp))
 
             ModelInfo.modelsByEngine.forEach { (engineType, models) ->
                 Text(

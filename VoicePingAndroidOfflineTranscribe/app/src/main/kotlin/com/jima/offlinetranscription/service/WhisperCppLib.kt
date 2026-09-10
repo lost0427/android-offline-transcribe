@@ -41,4 +41,9 @@ object WhisperCppLib {
 
     /** Get whisper.cpp system info string. */
     external fun getSystemInfo(): String
+    external fun initVad(modelPath: String, numThreads: Int): Long
+    external fun freeVad(contextPtr: Long)
+    external fun detectVad(contextPtr: Long, audioData: FloatArray, threshold: Float, minSpeechMs: Int,
+                           minSilenceMs: Int, maxSpeechSeconds: Float, speechPadMs: Int,
+                           overlapSeconds: Float): Array<VadSegment>
 }
