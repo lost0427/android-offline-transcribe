@@ -163,10 +163,8 @@ class WhisperEngine(
     private var recordingJob: Job? = null
     private var energyJob: Job? = null
     private val recorderPrewarmMutex = Mutex()
-    private val inferencePrewarmMutex = Mutex()
     val transcriptionCoordinator = TranscriptionCoordinator(this)
     internal var chunkManager = transcriptionCoordinator.createChunkManagerForModel(_selectedModel.value)
-    private var prewarmedModelId: String? = null
     private val sessionToken = AtomicLong(0)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val mlKitTranslator = MlKitTranslator()
@@ -351,7 +349,7 @@ class WhisperEngine(
             downloader.markManagedModelReady(model)
             currentEngine = engine
             _executionProviderStatus.value = engine.executionProviderStatus
-            prewarmedModelId = null
+    
             _modelState.value = ModelState.Loaded
         } catch (e: Throwable) {
             _modelState.value = ModelState.Unloaded
@@ -363,7 +361,7 @@ class WhisperEngine(
         currentEngine?.release()
         currentEngine = null
         _executionProviderStatus.value = ExecutionProviderStatus()
-        prewarmedModelId = null
+
         _modelState.value = ModelState.Unloaded
     }
 
@@ -426,7 +424,7 @@ class WhisperEngine(
 
             val previousEngine = currentEngine
             currentEngine = engine
-            prewarmedModelId = null
+    
             _modelState.value = ModelState.Loaded
             preferences.setSelectedModelId(model.id)
             if (previousEngine != null && previousEngine !== engine) {
@@ -461,7 +459,7 @@ class WhisperEngine(
             }
         }
         currentEngine = null
-        prewarmedModelId = null
+
         _modelState.value = ModelState.Unloaded
         setupModel()
     }
@@ -527,42 +525,6 @@ class WhisperEngine(
                 audioRecorder.prewarm(_audioInputMode.value)
             }
         }
-    }
-
-    /**
-     * Prime the first native ASR decode so user speech is not delayed by runtime
-     * graph compilation / allocator initialization on the first utterance.
-     */
-    suspend fun prewarmInferencePath() {
-        if (_sessionState.value != SessionState.Idle) return
-        val engine = currentEngine ?: return
-        if (!engine.isLoaded) return
-        val selectedModel = _selectedModel.value
-        val currentModelId = selectedModel.id
-        if (prewarmedModelId == currentModelId) return
-
-        inferencePrewarmMutex.withLock {
-            if (_sessionState.value != SessionState.Idle) return
-            val liveEngine = currentEngine ?: return
-            if (!liveEngine.isLoaded) return
-            val liveModel = _selectedModel.value
-            val liveModelId = liveModel.id
-            if (prewarmedModelId == liveModelId) return
-
-            // Skip synthetic inference prewarm — sherpa-onnx warmup can burn CPU on
-            // some Android runtimes while idle. Mic prewarm is still active.
-            prewarmedModelId = liveModelId
-            Log.i("WhisperEngine", "Skipping inference prewarm for ${liveModel.engineType}")
-        }
-    }
-
-    suspend fun prewarmRealtimePath() {
-        Log.i(
-            "WhisperEngine",
-            "prewarmRealtimePath: state=${_sessionState.value}, inputMode=${_audioInputMode.value}, micPermission=${audioRecorder.hasPermission()}, modelLoaded=${currentEngine?.isLoaded == true}"
-        )
-        prewarmRecordingPath()
-        prewarmInferencePath()
     }
 
     fun startRecording() {
@@ -1314,6 +1276,6 @@ class WhisperEngine(
         mlKitTranslator.close()
         currentEngine?.release()
         currentEngine = null
-        prewarmedModelId = null
+
     }
 }
