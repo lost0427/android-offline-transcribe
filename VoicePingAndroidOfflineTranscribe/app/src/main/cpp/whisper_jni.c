@@ -206,8 +206,8 @@ JNIEXPORT jfloatArray JNICALL Java_com_voiceping_offlinetranscription_service_Wh
         jfloat *buf = (jfloat *)malloc(sizeof(jfloat) * count * 2);
         if (buf) {
             for (int i = 0; i < count; i++) {
-                buf[i * 2]     = whisper_vad_segments_get_segment_t0(segs, i) * 1000.0f;
-                buf[i * 2 + 1] = whisper_vad_segments_get_segment_t1(segs, i) * 1000.0f;
+                buf[i * 2]     = whisper_vad_segments_get_segment_t0(segs, i) * 10.0f;
+                buf[i * 2 + 1] = whisper_vad_segments_get_segment_t1(segs, i) * 10.0f;
             }
             (*env)->SetFloatArrayRegion(env, result, 0, count * 2, buf);
             free(buf);
