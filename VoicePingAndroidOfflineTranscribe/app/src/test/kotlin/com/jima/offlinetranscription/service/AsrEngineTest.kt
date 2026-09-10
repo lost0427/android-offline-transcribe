@@ -105,7 +105,6 @@ class AsrEngineTest {
         assertEquals(1, PerformanceProfile.ECO.recommendedCpuThreads(1))
         assertEquals(4, PerformanceProfile.BALANCED.recommendedCpuThreads(6))
         assertEquals(6, PerformanceProfile.MAX_PERFORMANCE.recommendedCpuThreads(6))
-        assertEquals(6, PerformanceProfile.BENCHMARK.recommendedCpuThreads(6))
     }
 
     @Test

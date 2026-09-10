@@ -1119,7 +1119,6 @@ private val PerformanceProfile.label: String
         PerformanceProfile.ECO -> "Eco"
         PerformanceProfile.BALANCED -> "Balanced"
         PerformanceProfile.MAX_PERFORMANCE -> "Max Performance"
-        PerformanceProfile.BENCHMARK -> "Benchmark"
     }
 
 @Composable
