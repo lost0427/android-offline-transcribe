@@ -215,7 +215,7 @@ class StreamingChunkManager(
             .joinToString(" ")
     }
 
-    fun joinChunkTexts(vararg parts: String): String {
+    private fun joinChunkTexts(vararg parts: String): String {
         return parts.filter { it.isNotBlank() }.joinToString(" ")
     }
 
