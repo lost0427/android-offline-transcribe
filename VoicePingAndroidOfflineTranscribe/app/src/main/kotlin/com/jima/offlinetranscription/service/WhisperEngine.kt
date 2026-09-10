@@ -1074,75 +1074,8 @@ class WhisperEngine(
         }
     }
 
-    private fun readWavFile(filePath: String): FloatArray {
-        val file = File(filePath)
-        if (!file.exists()) throw Exception("File not found: $filePath")
-        val bytes = file.readBytes()
-        if (bytes.size < 12) throw Exception("File too small to be a valid WAV")
-
-        val riff = String(bytes, 0, 4, Charsets.US_ASCII)
-        if (riff != "RIFF") throw Exception("Not a RIFF file")
-        val wave = String(bytes, 8, 4, Charsets.US_ASCII)
-        if (wave != "WAVE") throw Exception("Not a WAVE file")
-
-        // Parse chunks to find fmt and data
-        var bitsPerSample = 16
-        var channels = 1
-        var sampleRate = AudioConstants.SAMPLE_RATE
-        var dataOffset = -1
-        var dataSize = -1
-
-        var pos = 12
-        while (pos + 8 <= bytes.size) {
-            val chunkId = String(bytes, pos, 4, Charsets.US_ASCII)
-            val chunkSize = java.nio.ByteBuffer.wrap(bytes, pos + 4, 4)
-                .order(java.nio.ByteOrder.LITTLE_ENDIAN).int
-            if (chunkId == "fmt " && pos + 8 + chunkSize <= bytes.size) {
-                val buf = java.nio.ByteBuffer.wrap(bytes, pos + 8, chunkSize)
-                    .order(java.nio.ByteOrder.LITTLE_ENDIAN)
-                buf.short // audioFormat
-                channels = buf.short.toInt()
-                sampleRate = buf.int
-                buf.int // byteRate
-                buf.short // blockAlign
-                bitsPerSample = buf.short.toInt()
-            } else if (chunkId == "data") {
-                dataOffset = pos + 8
-                dataSize = chunkSize.coerceAtMost(bytes.size - dataOffset)
-                break
-            }
-            pos += 8 + chunkSize
-            if (chunkSize % 2 != 0) pos++ // RIFF chunks are word-aligned
-        }
-
-        if (dataOffset < 0 || dataSize <= 0) throw Exception("No data chunk found in WAV")
-        Log.i("WhisperEngine", "WAV: ${sampleRate}Hz ${channels}ch ${bitsPerSample}bit data=${dataSize}B")
-
-        val mono = if (bitsPerSample == 16) {
-            val sampleCount = dataSize / (2 * channels)
-            FloatArray(sampleCount) { i ->
-                val off = dataOffset + i * 2 * channels
-                val low = bytes[off].toInt() and 0xFF
-                val high = bytes[off + 1].toInt()
-                (high shl 8 or low).toFloat() / 32768f
-            }
-        } else if (bitsPerSample == 32) {
-            val sampleCount = dataSize / (4 * channels)
-            FloatArray(sampleCount) { i ->
-                val off = dataOffset + i * 4 * channels
-                java.nio.ByteBuffer.wrap(bytes, off, 4)
-                    .order(java.nio.ByteOrder.LITTLE_ENDIAN).float
-            }
-        } else {
-            throw Exception("Unsupported bits per sample: $bitsPerSample")
-        }
-        return resampleTo16k(mono, sampleRate)
-    }
-
-    /** Uses Android's platform decoders for local MP3/AAC/M4A/OGG and supported video containers. */
+    /** Uses Android's platform decoders for WAV, MP3/AAC/M4A/OGG and supported video containers. */
     private fun decodeAudioFile(filePath: String): FloatArray {
-        if (filePath.lowercase().endsWith(".wav")) return readWavFile(filePath)
-
         val extractor = MediaExtractor()
         var codec: MediaCodec? = null
         try {
