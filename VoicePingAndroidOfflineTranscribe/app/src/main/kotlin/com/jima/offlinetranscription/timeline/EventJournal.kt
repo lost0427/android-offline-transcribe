@@ -2,7 +2,6 @@ package com.voiceping.offlinetranscription.timeline
 
 import java.io.File
 import java.io.FileOutputStream
-import org.json.JSONObject
 
 /**
  * Append-only, locally stored write-ahead journal. Call [append] before writing
@@ -20,12 +19,32 @@ class EventJournal(private val file: File) {
 
     fun readRecords(): List<String> = if (file.exists()) file.readLines(Charsets.UTF_8) else emptyList()
 
-    private fun TimelineEvent.toNdjson(): String = JSONObject().apply {
-        put("sessionId", sessionId)
-        put("timestampMillis", timestampMillis)
-        put("packageName", packageName)
-        put("type", type.name)
-        put("summary", summary)
-        put("recovered", recovered)
-    }.toString()
+    private fun TimelineEvent.toNdjson(): String = buildString {
+        append('{')
+        appendJson("sessionId", sessionId); append(',')
+        appendJson("timestampMillis", timestampMillis.toString(), quoted = false); append(',')
+        appendJson("packageName", packageName); append(',')
+        appendJson("type", type.name); append(',')
+        appendJson("summary", summary); append(',')
+        appendJson("recovered", recovered.toString(), quoted = false)
+        append('}')
+    }
+
+    private fun StringBuilder.appendJson(name: String, value: String, quoted: Boolean = true) {
+        append('"').append(name).append("\":")
+        if (quoted) append('"').append(value.jsonEscape()).append('"') else append(value)
+    }
+
+    private fun String.jsonEscape(): String = buildString {
+        this@jsonEscape.forEach { character ->
+            when (character) {
+                '\\' -> append("\\\\")
+                '"' -> append("\\\"")
+                '\n' -> append("\\n")
+                '\r' -> append("\\r")
+                '\t' -> append("\\t")
+                else -> append(character)
+            }
+        }
+    }
 }
