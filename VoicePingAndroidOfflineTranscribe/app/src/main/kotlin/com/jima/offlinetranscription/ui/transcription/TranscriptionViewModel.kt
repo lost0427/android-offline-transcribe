@@ -3,6 +3,7 @@ package com.voiceping.offlinetranscription.ui.transcription
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.webkit.MimeTypeMap
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.voiceping.offlinetranscription.model.AudioInputMode
@@ -146,7 +147,11 @@ class TranscriptionViewModel(
     fun transcribeWavUri(context: Context, uri: Uri) {
         launchEngineAction {
             val cached = withContext(Dispatchers.IO) {
-                val destination = File(context.cacheDir, "import-${System.currentTimeMillis()}.wav")
+                val extension = context.contentResolver.getType(uri)
+                    ?.let(MimeTypeMap.getSingleton()::getExtensionFromMimeType)
+                    ?.takeIf { it.isNotBlank() }
+                    ?: "audio"
+                val destination = File(context.cacheDir, "import-${System.currentTimeMillis()}.$extension")
                 context.contentResolver.openInputStream(uri)?.use { input ->
                     destination.outputStream().use { output -> input.copyTo(output) }
                 } ?: throw IllegalArgumentException("Unable to read selected audio file")
