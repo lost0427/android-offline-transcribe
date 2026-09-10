@@ -179,3 +179,44 @@ JNIEXPORT jlong JNICALL Java_com_voiceping_offlinetranscription_service_WhisperC
 JNIEXPORT void JNICALL Java_com_voiceping_offlinetranscription_service_WhisperCppLib_freeVad(JNIEnv *env, jobject thiz, jlong ptr) {
     (void)env; (void)thiz; whisper_vad_free((struct whisper_vad_context *)ptr);
 }
+
+JNIEXPORT jfloatArray JNICALL Java_com_voiceping_offlinetranscription_service_WhisperCppLib_detectVad(
+        JNIEnv *env, jobject thiz, jlong context_ptr, jfloatArray audio_data,
+        jfloat threshold, jint min_speech_ms, jint min_silence_ms,
+        jfloat max_speech_s, jint speech_pad_ms, jfloat overlap_s) {
+    (void)thiz;
+    if (context_ptr == 0) return (*env)->NewFloatArray(env, 0);
+    struct whisper_vad_context *vctx = (struct whisper_vad_context *)context_ptr;
+    jfloat *audio = (*env)->GetFloatArrayElements(env, audio_data, NULL);
+    jsize n_samples = (*env)->GetArrayLength(env, audio_data);
+
+    struct whisper_vad_params params = whisper_vad_default_params();
+    params.threshold = threshold;
+    params.min_speech_duration_ms = min_speech_ms;
+    params.min_silence_duration_ms = min_silence_ms;
+    params.max_speech_duration_s = max_speech_s;
+    params.speech_pad_ms = speech_pad_ms;
+    params.samples_overlap = overlap_s;
+
+    jfloatArray result = (*env)->NewFloatArray(env, 0);
+    struct whisper_vad_segments *segs =
+        whisper_vad_segments_from_samples(vctx, params, audio, n_samples);
+    (*env)->ReleaseFloatArrayElements(env, audio_data, audio, JNI_ABORT);
+    if (segs) {
+        int count = whisper_vad_segments_n_segments(segs);
+        result = (*env)->NewFloatArray(env, count * 2);
+        if (count > 0) {
+            jfloat *buf = (jfloat *)malloc(sizeof(jfloat) * count * 2);
+            if (buf) {
+                for (int i = 0; i < count; i++) {
+                    buf[i * 2]     = whisper_vad_segments_get_segment_t0(segs, i) * 1000.0f;
+                    buf[i * 2 + 1] = whisper_vad_segments_get_segment_t1(segs, i) * 1000.0f;
+                }
+                (*env)->SetFloatArrayRegion(env, result, 0, count * 2, buf);
+                free(buf);
+            }
+        }
+        whisper_vad_free_segments(segs);
+    }
+    return result;
+}

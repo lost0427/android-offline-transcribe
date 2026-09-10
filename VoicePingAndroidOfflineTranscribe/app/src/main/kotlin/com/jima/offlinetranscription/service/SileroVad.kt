@@ -52,8 +52,9 @@ class SileroVad(private val modelsDir: File, private val downloader: ModelDownlo
 
     fun detect(samples: FloatArray): List<VadSegment> {
         if (pointer == 0L) return emptyList()
-        return WhisperCppLib.detectVad(pointer, samples, THRESHOLD, MIN_SPEECH_MS, MIN_SILENCE_MS,
-            MAX_SPEECH_SECONDS, SPEECH_PAD_MS, OVERLAP_SECONDS).toList()
+        val flat = WhisperCppLib.detectVad(pointer, samples, THRESHOLD, MIN_SPEECH_MS, MIN_SILENCE_MS,
+            MAX_SPEECH_SECONDS, SPEECH_PAD_MS, OVERLAP_SECONDS)
+        return flat.toList().chunked(2).map { (startMs, endMs) -> VadSegment(startMs.toLong(), endMs.toLong()) }
     }
 
     fun release() {

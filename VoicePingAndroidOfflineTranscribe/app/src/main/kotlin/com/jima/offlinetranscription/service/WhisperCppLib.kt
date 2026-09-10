@@ -43,7 +43,9 @@ object WhisperCppLib {
     external fun getSystemInfo(): String
     external fun initVad(modelPath: String, numThreads: Int): Long
     external fun freeVad(contextPtr: Long)
+
+    /** Detect speech segments. Returns flat [startMs0, endMs0, startMs1, endMs1, ...]. */
     external fun detectVad(contextPtr: Long, audioData: FloatArray, threshold: Float, minSpeechMs: Int,
                            minSilenceMs: Int, maxSpeechSeconds: Float, speechPadMs: Int,
-                           overlapSeconds: Float): Array<VadSegment>
+                           overlapSeconds: Float): FloatArray
 }
