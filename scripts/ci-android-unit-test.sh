@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# CI smoke test for Android: build debug APK and run a minimal unit test suite.
+# CI smoke test for Android: run a minimal unit test suite (no APK build).
 
 set -euo pipefail
 
@@ -15,4 +15,4 @@ cd "$APP_DIR"
 chmod +x ./gradlew ./setup-deps.sh
 
 ./setup-deps.sh
-./gradlew --no-daemon assembleDebug testDebugUnitTest --tests "$TEST_FILTER"
+./gradlew --no-daemon testDebugUnitTest --tests "$TEST_FILTER"

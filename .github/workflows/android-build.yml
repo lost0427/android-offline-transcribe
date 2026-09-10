@@ -54,7 +54,7 @@ jobs:
         working-directory: VoicePingAndroidOfflineTranscribe
         run: |
           chmod +x ./gradlew
-          ./gradlew --no-daemon assembleRelease
+          ./gradlew --no-daemon assembleDebug assembleRelease
 
       - name: Validate Android binaries
         run: |
