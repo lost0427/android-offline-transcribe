@@ -28,7 +28,6 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.BufferedOutputStream
-import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -857,10 +856,11 @@ class WhisperEngine(
         fileTranscriptionJob = scope.launch(Dispatchers.Default) {
             try {
                 Log.i("WhisperEngine", "transcribeFile: reading $filePath")
-                val totalSamples = withContext(Dispatchers.IO) {
+                val decoded = withContext(Dispatchers.IO) {
                     decodeAudioFileTo16kPcm(filePath, pcmFile) { msg -> _hypothesisText.value = msg }
                 }
-                val peakGain = withContext(Dispatchers.IO) { computePcmPeakGain(pcmFile) }
+                val totalSamples = decoded.totalSamples
+                val peakGain = decoded.peakGain
                 if (peakGain > 1f) Log.i("WhisperEngine", "transcribeFile: quiet audio, applying gain x$peakGain")
                 val durationSec = totalSamples / AudioConstants.SAMPLE_RATE.toDouble()
                 Log.i("WhisperEngine", "transcribeFile: $totalSamples samples (${durationSec}s)")
@@ -1221,16 +1221,18 @@ class WhisperEngine(
         }
     }
 
-    /** Decode any supported audio file to 16 kHz mono PCM16 on disk, streaming.
+    /** Decode any supported audio file to 16 kHz mono PCM16 on disk, streaming, in one pass.
      *  Peak Java heap stays at one codec buffer regardless of input length, so multi-hour
-     *  files work within the 256 MB app heap. ponytail: linear-interp resample runs per
-     *  codec chunk on the global sample grid (1-sample carry) — ±1 sample error per chunk, inaudible.
-     *  Returns total 16k sample count. */
+     *  files work within the 256 MB app heap. Input is read in bulk (no per-sample ByteBuffer
+     *  calls), 16 k mono PCM16 is forwarded untouched, and the peak is measured while writing
+     *  so there is no second file scan. ponytail: linear-interp resample runs per codec chunk
+     *  on the global sample grid (1-sample carry) — ±1 sample error per chunk, inaudible.
+     *  Returns total 16k sample count plus the measured peak. */
     private fun decodeAudioFileTo16kPcm(
         filePath: String,
         out: File,
         onProgress: (String) -> Unit = {}
-    ): Long {
+    ): DecodedPcm {
         val extractor = MediaExtractor()
         var codec: MediaCodec? = null
         try {
@@ -1250,33 +1252,53 @@ class WhisperEngine(
             var channels = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
             var pcmEncoding = AudioFormat.ENCODING_PCM_16BIT
 
-            DataOutputStream(BufferedOutputStream(FileOutputStream(out))).use { sink ->
-                var nextOut = 0L      // next global 16k output index to emit
-                var globalStart = 0L  // global source index of the chunk being processed
-                var carry = 0f        // last source sample of the previous chunk (for deferred output)
+            DataOutputStream(BufferedOutputStream(FileOutputStream(out), 1 shl 20)).use { sink ->
+                var nextOut = 0L        // next global 16k output index to emit
+                var globalStart = 0L    // global source index of the chunk being processed
+                var carry = 0f          // last source sample of the previous chunk (for deferred output)
                 var pendingTail = false // a resampled output was deferred awaiting the next chunk
+                var peak = 0
+                var outBytes = ByteArray(0)     // reused PCM16 pack buffer
+                var mono = FloatArray(0)        // reused downmix buffer
+                var resampled = FloatArray(0)   // reused resample buffer
+                var scratchShort = ShortArray(0)
+                var scratchFloat = FloatArray(0)
 
-                fun writePcm16(samples: FloatArray, n: Int) {
-                    val bytes = ByteArray(n * 2)
+                fun emitPcm16(samples: FloatArray, n: Int) {
+                    if (outBytes.size < n * 2) outBytes = ByteArray(n * 2)
                     for (i in 0 until n) {
                         val v = (samples[i].coerceIn(-1f, 1f) * 32767f).toInt()
-                        bytes[2 * i] = (v and 0xff).toByte()
-                        bytes[2 * i + 1] = (v shr 8).toByte()
+                        val a = if (v < 0) -v else v
+                        if (a > peak) peak = a
+                        outBytes[2 * i] = (v and 0xff).toByte()
+                        outBytes[2 * i + 1] = (v shr 8).toByte()
                     }
-                    sink.write(bytes)
+                    sink.write(outBytes, 0, n * 2)
                 }
 
-                fun drainChunk(samples: FloatArray) {
-                    val n = samples.size
+                // Already 16 kHz mono PCM16: forward the decoded samples untouched (peak only).
+                fun emitNativePcm16(shorts: ShortArray, n: Int) {
+                    if (outBytes.size < n * 2) outBytes = ByteArray(n * 2)
+                    for (i in 0 until n) {
+                        val v = shorts[i].toInt()
+                        val a = if (v < 0) -v else v
+                        if (a > peak) peak = a
+                        outBytes[2 * i] = (v and 0xff).toByte()
+                        outBytes[2 * i + 1] = (v shr 8).toByte()
+                    }
+                    sink.write(outBytes, 0, n * 2)
+                }
+
+                fun writeMono(samples: FloatArray, n: Int) {
                     if (n == 0) return
                     if (sampleRate == AudioConstants.SAMPLE_RATE) {
-                        writePcm16(samples, n)
+                        emitPcm16(samples, n)
                         nextOut += n
                     } else {
                         val sr = AudioConstants.SAMPLE_RATE.toLong()
                         val rate = sampleRate.toLong()
                         val est = ((globalStart + n) * sr / rate + 2 - nextOut).toInt().coerceAtLeast(0)
-                        val resampled = FloatArray(est)
+                        if (resampled.size < est) resampled = FloatArray(est)
                         var m = 0
                         while (true) {
                             val s = nextOut.toDouble() * rate / sr
@@ -1295,9 +1317,9 @@ class WhisperEngine(
                             resampled[m++] = a + (b - a) * frac
                             nextOut++
                         }
-                        if (m > 0) writePcm16(resampled, m)
+                        if (m > 0) emitPcm16(resampled, m)
                     }
-                    if (samples.isNotEmpty()) carry = samples[n - 1]
+                    if (n > 0) carry = samples[n - 1]
                     globalStart += n
                 }
 
@@ -1342,36 +1364,56 @@ class WhisperEngine(
                                 val output = codec.getOutputBuffer(index) ?: throw IllegalStateException("Missing decoded buffer")
                                 output.position(info.offset)
                                 output.limit(info.offset + info.size)
-                                val bytesPerFrame = if (pcmEncoding == AudioFormat.ENCODING_PCM_FLOAT) 4 else 2
-                                val frameCount = output.remaining() / bytesPerFrame / channels
-                                val chunk = FloatArray(frameCount)
-                                for (f in 0 until frameCount) {
-                                    var sum = 0f
-                                    if (pcmEncoding == AudioFormat.ENCODING_PCM_FLOAT) {
-                                        repeat(channels) { sum += output.order(java.nio.ByteOrder.LITTLE_ENDIAN).float }
+                                val isFloat = pcmEncoding == AudioFormat.ENCODING_PCM_FLOAT
+                                val bytesPerSample = if (isFloat) 4 else 2
+                                val frameCount = output.remaining() / bytesPerSample / channels
+                                if (frameCount > 0) {
+                                    val count = frameCount * channels
+                                    if (isFloat) {
+                                        if (scratchFloat.size < count) scratchFloat = FloatArray(count)
+                                        output.order(java.nio.ByteOrder.LITTLE_ENDIAN).asFloatBuffer()
+                                            .get(scratchFloat, 0, count)
+                                        if (mono.size < frameCount) mono = FloatArray(frameCount)
+                                        var k = 0
+                                        for (f in 0 until frameCount) {
+                                            var sum = 0f
+                                            repeat(channels) { sum += scratchFloat[k++] }
+                                            mono[f] = sum / channels
+                                        }
+                                        writeMono(mono, frameCount)
                                     } else {
-                                        repeat(channels) {
-                                            val low = output.get().toInt() and 0xff
-                                            val high = output.get().toInt()
-                                            sum += (high shl 8 or low) / 32768f
+                                        if (scratchShort.size < count) scratchShort = ShortArray(count)
+                                        output.order(java.nio.ByteOrder.LITTLE_ENDIAN).asShortBuffer()
+                                            .get(scratchShort, 0, count)
+                                        if (channels == 1 && sampleRate == AudioConstants.SAMPLE_RATE) {
+                                            emitNativePcm16(scratchShort, frameCount)
+                                            nextOut += frameCount
+                                            globalStart += frameCount
+                                        } else {
+                                            if (mono.size < frameCount) mono = FloatArray(frameCount)
+                                            var k = 0
+                                            for (f in 0 until frameCount) {
+                                                var sum = 0f
+                                                repeat(channels) { sum += scratchShort[k++].toFloat() / 32768f }
+                                                mono[f] = sum / channels
+                                            }
+                                            writeMono(mono, frameCount)
                                         }
                                     }
-                                    chunk[f] = sum / channels
                                 }
-                                drainChunk(chunk)
                             }
                             codec.releaseOutputBuffer(index, false)
                             outputDone = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
                             if (outputDone && pendingTail) {
                                 // The deferred tail sample clamps to the last source sample at EOF.
-                                writePcm16(floatArrayOf(carry), 1)
+                                emitPcm16(floatArrayOf(carry), 1)
                                 nextOut++
                             }
                         }
                     }
                 }
                 if (nextOut == 0L) throw IllegalArgumentException("Decoder produced no audio")
-                return nextOut
+                return DecodedPcm(totalSamples = nextOut, peakGain = peakToGain(peak))
             }
         } finally {
             codec?.let { decoder ->
@@ -1415,22 +1457,7 @@ class WhisperEngine(
 
     /** Gain multiplier for quiet recordings: normalize peak to ~0.9. ponytail: capped 16x —
      * beyond that the amplified noise floor hurts ASR more than the gain helps. */
-    private fun computePcmPeakGain(pcm: File): Float {
-        val buf = ByteArray(64 * 1024)
-        var peak = 0
-        DataInputStream(pcm.inputStream().buffered()).use { din ->
-            while (true) {
-                val n = din.read(buf)
-                if (n <= 0) break
-                var i = 0
-                while (i + 1 < n) {
-                    val v = ((buf[i].toInt() and 0xff) or (buf[i + 1].toInt() shl 8)).toShort().toInt()
-                    val a = if (v < 0) -v else v
-                    if (a > peak) peak = a
-                    i += 2
-                }
-            }
-        }
+    private fun peakToGain(peak: Int): Float {
         if (peak == 0) return 1f
         val p = peak / 32768f
         if (p >= 0.3f) return 1f
@@ -1479,6 +1506,10 @@ class WhisperEngine(
         sileroVad.release()
     }
 }
+
+/** Result of decoding an imported file: total 16 kHz mono samples written and the quiet-audio
+ *  gain computed from the peak measured during the same pass. */
+internal data class DecodedPcm(val totalSamples: Long, val peakGain: Float)
 
 /** Offset (in samples) of the quietest [frameSamples]-long frame's centre within [samples].
  *  Returns [samples].size when there is no full frame to measure, meaning "cut at the end". */
