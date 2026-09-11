@@ -653,7 +653,11 @@ private fun SettingsBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(
+            modifier = Modifier
+                .padding(16.dp)
+                .verticalScroll(rememberScrollState())
+        ) {
             Text(
                 text = "Settings",
                 style = MaterialTheme.typography.titleLarge,
