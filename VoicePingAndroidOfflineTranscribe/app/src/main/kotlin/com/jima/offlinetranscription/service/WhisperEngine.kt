@@ -189,6 +189,7 @@ class WhisperEngine(
 
     companion object {
         private const val INFERENCE_PREWARM_AUDIO_SECONDS = 0.5f
+        private const val VAD_MAX_CHUNK_MS = 30_000L
         fun normalizeLanguageCode(raw: String?): String? =
             TextNormalizationUtils.normalizeLanguageCode(raw)
     }
@@ -1018,11 +1019,16 @@ class WhisperEngine(
         // VAD setting applies to file imports too: off → fixed 30 s sliding windows.
         val slices = if (_useVAD.value && sileroVad.state.value == ModelState.Loaded) {
             onProgress("Detecting speech…")
-            detectVadWindows(pcm, totalSamples, peakGain, onProgress)
+            mergeVadSegments(
+                detectVadWindows(pcm, totalSamples, peakGain, onProgress),
+                VAD_MAX_CHUNK_MS
+            )
         } else {
             emptyList()
         }
         val sr = AudioConstants.SAMPLE_RATE.toLong()
+        val window = 30L * sr
+        val search = 2L * sr
         val merged = mutableListOf<TranscriptionSegment>()
         suspend fun runSlice(samples: FloatArray, offsetMs: Long) {
             try {
@@ -1040,19 +1046,10 @@ class WhisperEngine(
         if (slices.isEmpty()) {
             // No VAD: cut at the quietest point near each ~30 s boundary so seams land in a
             // pause instead of mid-word. ponytail: linear scan of a small search region.
-            val window = 30L * sr
-            val search = 2L * sr
-            val frame = (sr / 33).toInt()  // ~30 ms
             var s = 0L
             var lastPct = -1
             while (s < totalSamples) {
-                var end = minOf(s + window, totalSamples)
-                if (end < totalSamples) {
-                    val searchStart = (end - search).coerceAtLeast(s + 1)
-                    val region = readPcm16(pcm, searchStart, (end - searchStart).toInt(), peakGain)
-                    val cut = searchStart + quietestFrameOffset(region, frame)
-                    if (cut > s && cut <= end) end = cut
-                }
+                val end = energyCutEnd(pcm, s, window, search, totalSamples, sr, peakGain)
                 runSlice(readPcm16(pcm, s, (end - s).toInt(), peakGain), s * 1000 / sr)
                 s = end
                 val pct = ((s * 100) / totalSamples).toInt().coerceIn(0, 100)
@@ -1065,12 +1062,39 @@ class WhisperEngine(
         }
         onProgress("Transcribing…")
         for (slice in slices) {
-            val from = (slice.startMs * sr / 1000).coerceIn(0L, totalSamples - 1)
+            var from = (slice.startMs * sr / 1000).coerceIn(0L, totalSamples - 1)
             val to = (slice.endMs * sr / 1000).coerceIn(from, totalSamples)
-            if (to <= from) continue
-            runSlice(readPcm16(pcm, from, (to - from).toInt(), peakGain), from * 1000 / sr)
+            while (from < to) {
+                // A merged chunk longer than the window is split at its quietest interior point.
+                val end = if (to - from <= window) to
+                else energyCutEnd(pcm, from, window, search, to, sr, peakGain)
+                val bounded = minOf(end, to)
+                runSlice(readPcm16(pcm, from, (bounded - from).toInt(), peakGain), from * 1000 / sr)
+                from = bounded
+            }
         }
         return merged
+    }
+
+    /** End sample for a slice starting at [start] targeting [window] samples: backed off to the
+     *  centre of the quietest ~30 ms frame within [search] samples before the target, so the
+     *  seam lands in a pause. Never exceeds [totalSamples] or moves past [start]. */
+    private fun energyCutEnd(
+        pcm: File,
+        start: Long,
+        window: Long,
+        search: Long,
+        totalSamples: Long,
+        sr: Long,
+        peakGain: Float
+    ): Long {
+        val target = minOf(start + window, totalSamples)
+        if (target >= totalSamples) return target
+        val searchStart = (target - search).coerceAtLeast(start + 1)
+        val region = readPcm16(pcm, searchStart, (target - searchStart).toInt(), peakGain)
+        val frame = (sr / 33).toInt()  // ~30 ms
+        val cut = searchStart + quietestFrameOffset(region, frame)
+        return if (cut > start && cut <= target) cut else target
     }
 
     /** Run VAD over the PCM file in 60 s windows. Windows do not overlap, so every
@@ -1510,6 +1534,28 @@ class WhisperEngine(
 /** Result of decoding an imported file: total 16 kHz mono samples written and the quiet-audio
  *  gain computed from the peak measured during the same pass. */
 internal data class DecodedPcm(val totalSamples: Long, val peakGain: Float)
+
+/** Merge consecutive VAD speech segments (silence between them included) into chunks of at most
+ *  [maxMs]. Short fragments would otherwise reach the ASR with too little context and a
+ *  per-fragment language guess; an oversize single segment is split later at a quiet point. */
+internal fun mergeVadSegments(segments: List<VadSegment>, maxMs: Long): List<VadSegment> {
+    if (segments.isEmpty()) return emptyList()
+    val out = ArrayList<VadSegment>()
+    var start = segments[0].startMs
+    var end = segments[0].endMs
+    for (i in 1 until segments.size) {
+        val seg = segments[i]
+        if (seg.endMs - start <= maxMs) {
+            end = seg.endMs
+        } else {
+            out.add(VadSegment(start, end))
+            start = seg.startMs
+            end = seg.endMs
+        }
+    }
+    out.add(VadSegment(start, end))
+    return out
+}
 
 /** Offset (in samples) of the quietest [frameSamples]-long frame's centre within [samples].
  *  Returns [samples].size when there is no full frame to measure, meaning "cut at the end". */
