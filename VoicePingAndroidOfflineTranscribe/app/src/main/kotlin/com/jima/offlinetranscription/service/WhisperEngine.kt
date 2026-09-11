@@ -1038,14 +1038,23 @@ class WhisperEngine(
             }
         }
         if (slices.isEmpty()) {
-            // ponytail: fixed 30 s windows when VAD is unavailable — seams may clip a word mid-air.
+            // No VAD: cut at the quietest point near each ~30 s boundary so seams land in a
+            // pause instead of mid-word. ponytail: linear scan of a small search region.
             val window = 30L * sr
+            val search = 2L * sr
+            val frame = (sr / 33).toInt()  // ~30 ms
             var s = 0L
             var lastPct = -1
             while (s < totalSamples) {
-                val count = minOf(window, totalSamples - s).toInt()
-                runSlice(readPcm16(pcm, s, count, peakGain), s * 1000 / sr)
-                s += count
+                var end = minOf(s + window, totalSamples)
+                if (end < totalSamples) {
+                    val searchStart = (end - search).coerceAtLeast(s + 1)
+                    val region = readPcm16(pcm, searchStart, (end - searchStart).toInt(), peakGain)
+                    val cut = searchStart + quietestFrameOffset(region, frame)
+                    if (cut > s && cut <= end) end = cut
+                }
+                runSlice(readPcm16(pcm, s, (end - s).toInt(), peakGain), s * 1000 / sr)
+                s = end
                 val pct = ((s * 100) / totalSamples).toInt().coerceIn(0, 100)
                 if (pct >= lastPct + 5 || s >= totalSamples) {
                     lastPct = pct
@@ -1469,4 +1478,23 @@ class WhisperEngine(
         currentEngine = null
         sileroVad.release()
     }
+}
+
+/** Offset (in samples) of the quietest [frameSamples]-long frame's centre within [samples].
+ *  Returns [samples].size when there is no full frame to measure, meaning "cut at the end". */
+internal fun quietestFrameOffset(samples: FloatArray, frameSamples: Int): Int {
+    if (frameSamples <= 0 || samples.size < frameSamples) return samples.size
+    var bestOffset = samples.size
+    var bestEnergy = Double.MAX_VALUE
+    var i = 0
+    while (i + frameSamples <= samples.size) {
+        var energy = 0.0
+        for (j in i until i + frameSamples) energy += samples[j].toDouble() * samples[j]
+        if (energy < bestEnergy) {
+            bestEnergy = energy
+            bestOffset = i + frameSamples / 2
+        }
+        i += frameSamples
+    }
+    return bestOffset
 }
