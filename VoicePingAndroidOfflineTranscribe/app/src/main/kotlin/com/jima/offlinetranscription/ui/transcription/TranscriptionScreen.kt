@@ -826,6 +826,13 @@ private fun SettingsBottomSheet(
                 Text("Voice Activity Detection")
                 Switch(checked = useVAD, onCheckedChange = onVADChange)
             }
+            Text(
+                text = "Off = fixed 30 s windows. Turn off if a recording loses most of its text " +
+                    "(e.g. far-field meetings the VAD does not detect).",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
 
             Row(
                 modifier = Modifier

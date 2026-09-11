@@ -1012,10 +1012,11 @@ class WhisperEngine(
         onProgress: (String) -> Unit = {},
         onSlice: (List<TranscriptionSegment>, Double) -> Unit
     ): List<TranscriptionSegment> {
-        if (sileroVad.state.value == ModelState.Unloaded && sileroVad.isDownloaded()) {
+        if (_useVAD.value && sileroVad.state.value == ModelState.Unloaded && sileroVad.isDownloaded()) {
             sileroVad.prepare(download = false)
         }
-        val slices = if (sileroVad.state.value == ModelState.Loaded) {
+        // VAD setting applies to file imports too: off → fixed 30 s sliding windows.
+        val slices = if (_useVAD.value && sileroVad.state.value == ModelState.Loaded) {
             onProgress("Detecting speech…")
             detectVadWindows(pcm, totalSamples, peakGain, onProgress)
         } else {
