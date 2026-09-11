@@ -46,7 +46,7 @@ class SileroVad(private val modelsDir: File, private val downloader: ModelDownlo
 
     fun detect(samples: FloatArray): List<VadSegment> {
         if (pointer == 0L) return emptyList()
-        val flat = WhisperCppLib.detectVad(pointer, samples)
+        val flat = WhisperCppLib.detectVad(pointer, normalizeForVad(samples))
         return flat.toList().chunked(2).map { (startMs, endMs) -> VadSegment(startMs.toLong(), endMs.toLong()) }
     }
 
@@ -54,4 +54,17 @@ class SileroVad(private val modelsDir: File, private val downloader: ModelDownlo
         if (pointer != 0L) WhisperCppLib.freeVad(pointer)
         pointer = 0L
     }
+}
+
+/** Silero is amplitude-sensitive: quiet far-field recordings are missed even when they are
+ *  clearly speech. Normalize to ~-20 dBFS RMS so detection depends on the signal, not its level. */
+internal fun normalizeForVad(samples: FloatArray, targetRms: Double = 0.1): FloatArray {
+    if (samples.isEmpty()) return samples
+    var sum = 0.0
+    for (s in samples) sum += s.toDouble() * s
+    val rms = kotlin.math.sqrt(sum / samples.size)
+    if (rms < 1e-4) return samples  // near silence: don't amplify the noise floor
+    val gain = (targetRms / rms).coerceIn(0.25, 32.0).toFloat()
+    if (gain == 1f) return samples
+    return FloatArray(samples.size) { i -> (samples[i] * gain).coerceIn(-1f, 1f) }
 }
